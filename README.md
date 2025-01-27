@@ -1,4 +1,4 @@
-# Revisiting K-mer Profile for Effective and Scalable Genome Representation Learning
+# K-mers for Uncertainty Modelling
 
 ### Overview
 This project explores effective and scalable genome representation learning approaches relying on the k-mer features for the metagenomics binning task.
