@@ -124,7 +124,8 @@ class NonLinearModel(torch.nn.Module):
         self.batch1 = torch.nn.BatchNorm1d(512, dtype=torch.float, device=self.__device)
         self.activation1 = torch.nn.Sigmoid()
         self.dropout1 = torch.nn.Dropout(0.2)
-        self.linear2 = torch.nn.Linear(512, self.__dim, dtype=torch.float, device=self.__device)
+        self.linear2_mean = torch.nn.Linear(512, self.__dim, dtype=torch.float, device=self.__device)
+        self.linear2_cov = torch.nn.Linear(512, self.__dim, dtype=torch.float, device=self.__device)
 
         self.bce_loss = torch.nn.BCELoss()
 
@@ -134,15 +135,16 @@ class NonLinearModel(torch.nn.Module):
         output = self.batch1(output)
         output = self.activation1(output)
         output = self.dropout1(output)
-        output = self.linear2(output)
+        mean = self.linear2(output)
+        cov = torch.nn.functional.softplus(self.linear2_cov(output))
 
-        return output
+        return mean, cov
 
     def forward(self, left_kmer_profile, right_kmer_profile):
-        left_output = self.encoder(left_kmer_profile)
-        right_output = self.encoder(right_kmer_profile)
+        left_mean, left_cov = self.encoder(left_kmer_profile)
+        right_mean, right_cov = self.encoder(right_kmer_profile)
 
-        return left_output, right_output
+        return left_mean, left_cov, right_mean, right_cov
 
     def get_k(self):
         return self.__k
@@ -176,27 +178,35 @@ class NonLinearModel(torch.nn.Module):
 
         return embs
 
-def loss_func(left_embeddings, right_embeddings, labels, name="bern"):
+def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
 
-    if name == "bern":
-        p = torch.exp(-torch.norm(left_embeddings - right_embeddings, p=2, dim=1)**2 )
+    def compute_kl_div(mean1, cov1, mean2, cov2):
+        """
+        Compute the KL divergence between two Gaussian distributions with diagonal covariance matrices
+        0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
+        """
 
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
+        mean_dif = mean2 - mean1
+        cov2_inv = 1. / cov2
 
-    elif name == "poisson":
+        return 0.5 * (
+                (torch.log(cov2).sum(dim=1) - torch.log(cov1).sum(dim=1)) - mean1.shape[1]  +
+                (cov2_inv*cov1).sum(dim=1) + (mean_dif * cov2_inv * mean_dif).sum(dim=1)
+        )
 
-        log_lambda = -torch.norm(left_embeddings - right_embeddings, p=2, dim=1)**2
+    if name == "kl":
 
-        return torch.mean(-(labels * log_lambda) + torch.exp(log_lambda))
+        return (2*labels - 1) * compute_kl_div(left_mean, left_cov, right_mean, right_cov)
 
-    elif name == "hinge":
+    elif name == "symmetric_kl":
 
-        d = torch.norm(left_embeddings - right_embeddings, p=2, dim=1)
-        return torch.mean(labels * (d**2) + (1 - labels) * torch.nn.functional.relu(1 - d)**2)
+        return (2*labels - 1) * (
+                compute_kl_div(left_mean, left_cov, right_mean, right_cov) +
+                compute_kl_div(right_mean, right_cov, left_mean, left_cov)
+        )
 
     else:
-
-        raise ValueError(f"Unknown loss function: {name}")
+        raise ValueError(f"Unknown loss function name: {name}")
 
 
 def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern"):
@@ -213,10 +223,10 @@ def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern")
         labels = labels.reshape(-1).to(device)
 
         # Make predictions for the current epoch
-        left_output, right_output = model(left_kmer_profile, right_kmer_profile)
+        left_mean, left_cov, right_mean, right_cov = model(left_kmer_profile, right_kmer_profile)
 
         # Compute the loss and backpropagate
-        batch_loss = loss_func(left_output, right_output, labels, name=loss_name)
+        batch_loss = loss_func(left_mean, left_cov, right_mean, right_cov, labels, name=loss_name)
         batch_loss.backward()
 
         # Update the model parameters
@@ -296,7 +306,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=0, help='Batch size (0: no batch)')
     parser.add_argument('--device', type=str, default="cpu", help='Device (cpu or cuda)')
     parser.add_argument('--workers_num', type=int, default=1, help='Number of workers for data loader')
-    parser.add_argument('--loss_name', type=str, default="bern", help='Loss function (bern, poisson, hinge)')
+    parser.add_argument('--loss_name', type=str, default="symmetric_kl", help='Loss function (kl, symmetric_kl)')
     parser.add_argument('--output', type=str, help='Output file')
     parser.add_argument('--seed', type=int, default=26042024, help='Seed for random number generator')
     parser.add_argument('--checkpoint', type=int, default=0, help='Save the model for every checkpoint epoch')
