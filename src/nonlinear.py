@@ -135,7 +135,7 @@ class NonLinearModel(torch.nn.Module):
         output = self.batch1(output)
         output = self.activation1(output)
         output = self.dropout1(output)
-        mean = self.linear2(output)
+        mean = self.linear2_mean(output)
         cov = torch.nn.functional.softplus(self.linear2_cov(output))
 
         return mean, cov
@@ -196,14 +196,14 @@ def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
 
     if name == "kl":
 
-        return (2*labels - 1) * compute_kl_div(left_mean, left_cov, right_mean, right_cov)
+        return ( (2*labels - 1) * compute_kl_div(left_mean, left_cov, right_mean, right_cov) ).mean()
 
     elif name == "symmetric_kl":
 
-        return (2*labels - 1) * (
+        return ( (2*labels - 1) * (
                 compute_kl_div(left_mean, left_cov, right_mean, right_cov) +
                 compute_kl_div(right_mean, right_cov, left_mean, left_cov)
-        )
+        ) ).mean()
 
     else:
         raise ValueError(f"Unknown loss function name: {name}")
@@ -234,7 +234,7 @@ def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern")
 
         # Get the epoch loss for reporting
         epoch_loss += batch_loss.item()
-        del batch_loss, left_kmer_profile, right_kmer_profile, labels, left_output, right_output
+        #del batch_loss, left_kmer_profile, right_kmer_profile, labels, left_output, right_output
         torch.cuda.empty_cache()
 
     return epoch_loss / len(training_loader)
