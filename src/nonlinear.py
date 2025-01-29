@@ -174,9 +174,9 @@ class NonLinearModel(torch.nn.Module):
                 kmer_profiles.append(self.read2kmer_profile(read, normalized=normalized))
 
             kmer_profiles = torch.from_numpy(np.asarray(kmer_profiles)).to(torch.float)
-            embs = self.encoder(kmer_profiles).detach().numpy()
+            means, covs = self.encoder(kmer_profiles).detach().numpy()
 
-        return embs
+        return means, covs
 
 def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
 

@@ -16,7 +16,7 @@ from scipy.optimize import linear_sum_assignment
 
 MODEL2BATCH_SIZE = {
     "tnf": 100, "tnf_k": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
-    "kmerprofile": -1, "poisson": -1, "nonlinear": -1,
+    "kmerprofile": -1, "poisson": -1, "nonlinear": -1, "kum": -1,
 }
 
 
@@ -105,9 +105,17 @@ def get_embedding(
             kwargs['device'] = "cpu"
             pm = PoissonModel(**kwargs)
             pm.load_state_dict(model_state_dict)
-            embedding = pm.read2emb(dna_sequences)
+            embedding, _ = pm.read2emb(dna_sequences)
 
         elif model_name == "nonlinear":
+
+            kwargs, model_state_dict = torch.load(test_model_dir, map_location=torch.device("cpu"))
+            kwargs['device'] = "cpu"
+            nlm = NonLinearModel(**kwargs)
+            nlm.load_state_dict(model_state_dict)
+            embedding = nlm.read2emb(dna_sequences)
+
+        elif model_name == "kum":
 
             kwargs, model_state_dict = torch.load(test_model_dir, map_location=torch.device("cpu"))
             kwargs['device'] = "cpu"

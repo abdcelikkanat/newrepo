@@ -32,6 +32,8 @@ def main(args):
                         metric = "l1"
                     elif model_name == "nonlinear":
                         metric = "l2"
+                    elif model_name == "kum":
+                        metric = "l2"
                     else:
                         metric = "dot"
 
@@ -157,7 +159,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--model_list', type=str, default="dnaberts",
-        help='List of models to evaluate, separated by comma. Currently support [tnf, tnf-k, dnabert2, hyenadna, nt, dnarberts, kmerprofile, poisson, nonlinear]'
+        help='List of models to evaluate, separated by comma. Currently support [tnf, tnf-k, dnabert2, hyenadna, nt, dnarberts, kmerprofile, poisson, nonlinear, kum]'
     )
     parser.add_argument('--data_dir', type=str, default=None, help='Data directory')
     parser.add_argument(
