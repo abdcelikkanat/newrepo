@@ -136,7 +136,7 @@ class NonLinearModel(torch.nn.Module):
         output = self.activation1(output)
         output = self.dropout1(output)
         mean = self.linear2_mean(output)
-        cov = torch.nn.functional.softplus(self.linear2_cov(output))
+        cov = torch.nn.functional.softplus(self.linear2_cov(output)) + 1e-6
 
         return mean, cov
 
@@ -206,6 +206,14 @@ def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
                 compute_kl_div(left_mean, left_cov, right_mean, right_cov) +
                 compute_kl_div(right_mean, right_cov, left_mean, left_cov)
         ) ).mean()
+
+    elif name == "bern_symmetric_kl":
+
+        p = torch.exp(
+            - compute_kl_div(left_mean, left_cov, right_mean, right_cov) - compute_kl_div(right_mean, right_cov, left_mean, left_cov)
+        )
+
+        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
     else:
         raise ValueError(f"Unknown loss function name: {name}")

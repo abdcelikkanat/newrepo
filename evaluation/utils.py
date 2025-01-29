@@ -122,6 +122,7 @@ def get_embedding(
             nlm = NonLinearModel(**kwargs)
             nlm.load_state_dict(model_state_dict)
             embedding, covs = nlm.read2emb(dna_sequences)
+            print(f"Min cov value: {covs.min()}, Max cov value: {covs.max()}")
 
         else:
             raise ValueError(f"Unknown model {model_name}")
