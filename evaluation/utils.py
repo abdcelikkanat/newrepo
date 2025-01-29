@@ -105,7 +105,7 @@ def get_embedding(
             kwargs['device'] = "cpu"
             pm = PoissonModel(**kwargs)
             pm.load_state_dict(model_state_dict)
-            embedding, _ = pm.read2emb(dna_sequences)
+            embedding = pm.read2emb(dna_sequences)
 
         elif model_name == "nonlinear":
 
@@ -121,7 +121,7 @@ def get_embedding(
             kwargs['device'] = "cpu"
             nlm = NonLinearModel(**kwargs)
             nlm.load_state_dict(model_state_dict)
-            embedding = nlm.read2emb(dna_sequences)
+            embedding, covs = nlm.read2emb(dna_sequences)
 
         else:
             raise ValueError(f"Unknown model {model_name}")
