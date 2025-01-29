@@ -174,7 +174,9 @@ class NonLinearModel(torch.nn.Module):
                 kmer_profiles.append(self.read2kmer_profile(read, normalized=normalized))
 
             kmer_profiles = torch.from_numpy(np.asarray(kmer_profiles)).to(torch.float)
-            means, covs = self.encoder(kmer_profiles).detach().numpy()
+            means, covs = self.encoder(kmer_profiles)
+            means = means.detach().numpy()
+            covs = covs.detach().numpy()
 
         return means, covs
 
