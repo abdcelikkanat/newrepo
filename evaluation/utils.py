@@ -34,8 +34,8 @@ def kl_div_cdist(means1, variances1, means2, variances2, eps=1e-6):
     means1 = means1[:, np.newaxis, :]  # (n, 1, d)
     means2 = means2[np.newaxis, :, :]  # (1, n, d)
 
-    vars1 = variances1[:, np.newaxis, :] + eps
-    vars2 = variances2[np.newaxis, :, :] + eps
+    vars1 = variances1[:, np.newaxis, :]
+    vars2 = variances2[np.newaxis, :, :]
 
     log_vars1 = log_variances1[:, np.newaxis, :]
     log_vars2 = log_variances2[np.newaxis, :, :]
@@ -45,7 +45,7 @@ def kl_div_cdist(means1, variances1, means2, variances2, eps=1e-6):
     log_det_term = np.sum(log_vars2 - log_vars1, axis=2)  # (n, n)
 
     kl_matrix = 0.5 * (trace_term + quadratic_term - d + log_det_term)
-    np.fill_diagonal(kl_matrix, 0)  # KL divergence with itself is 0
+    # np.fill_diagonal(kl_matrix, 0)  # KL divergence with itself is 0
 
     return kl_matrix
 
@@ -437,7 +437,15 @@ def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
                 -distance.cdist(np.expand_dims(mean, axis=0), embeddings[start:end], 'minkowski', p=1.).reshape(-1)
             )
         elif metric == "symmetric_kl":
-
+            print(f"Start: {start}, End: {end}")
+            print(f"Mean: {mean.shape}, Cov: {cov.shape}")
+            print(f"Means: {means[start:end].shape}, Covs: {covs[start:end].shape}")
+            print(kl_div_cdist(
+                np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
+            ).shape)
+            print(kl_div_cdist(
+                np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
+            ).reshape(-1).shape)
             symmetric_kl = kl_div_cdist(
                 np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
             ).reshape(-1) + kl_div_cdist(
