@@ -451,6 +451,8 @@ def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
             ).reshape(-1) + kl_div_cdist(
                 means[start:end], covs[start:end], np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0)
             ).reshape(-1)
+            print(symmetric_kl)
+            print(symmetric_kl.shape)
             similarities = np.exp( -symmetric_kl )
 
         else:
