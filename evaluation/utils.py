@@ -22,37 +22,23 @@ MODEL2BATCH_SIZE = {
 }
 
 def kl_div_cdist(means1, variances1, means2, variances2, eps=1e-6):
-    variances1 = variances1 + eps  # Avoid division by zero
-    variances2 = variances2 + eps
-
+    """
+        0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
+        """
+    variances1 = variances1 + eps
     log_variances1 = np.log(variances1)
+    variances2 = variances2 + eps
     log_variances2 = np.log(variances2)
 
-    trace_term = np.sum(variances1 / variances2, axis=1)  # Sum over features (d)
-    quadratic_term = np.sum((means1 - means2) ** 2 / variances2, axis=1)
-    log_det_term = np.sum(log_variances2 - log_variances1, axis=1)
+    d = means1.shape[1]
+    means1 = means1[:, np.newaxis, :]  # (n, 1, d)
+    means2 = means2[np.newaxis, :, :]  # (1, n, d)
 
-    kl_div = 0.5 * (trace_term + quadratic_term - means1.shape[1] + log_det_term)
+    vars1 = variances1[:, np.newaxis, :] + eps
+    vars2 = variances2[np.newaxis, :, :] + eps
 
-    return kl_div
-
-
-def kl_div_pdist(means, variances, eps=1e-6):
-    """
-    0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
-    """
-    variances = variances + eps
-    log_variances = np.log(variances)
-
-    n, d = means.shape
-    means1 = means[:, np.newaxis, :]  # (n, 1, d)
-    means2 = means[np.newaxis, :, :]  # (1, n, d)
-
-    vars1 = variances[:, np.newaxis, :]
-    vars2 = variances[np.newaxis, :, :]
-
-    log_vars1 = log_variances[:, np.newaxis, :]
-    log_vars2 = log_variances[np.newaxis, :, :]
+    log_vars1 = log_variances1[:, np.newaxis, :]
+    log_vars2 = log_variances2[np.newaxis, :, :]
 
     trace_term = np.sum(vars1 / vars2, axis=2)  # (n, n)
     quadratic_term = np.sum((means1 - means2) ** 2 / vars2, axis=2)  # (n, n)
@@ -62,6 +48,12 @@ def kl_div_pdist(means, variances, eps=1e-6):
     np.fill_diagonal(kl_matrix, 0)  # KL divergence with itself is 0
 
     return kl_matrix
+
+
+def kl_div_pdist(means, variances, eps=1e-6):
+
+    return kl_div_cdist(means, variances, means, variances, eps=eps)
+
 
 def compute_kl_div(mean1, cov1, mean2, cov2):
     """
