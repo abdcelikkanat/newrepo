@@ -291,7 +291,7 @@ def calculate_llm_embedding(dna_sequences, model_name_or_path, model_max_length=
 
 def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric="dot", scalable=False):
     # rank nodes by the number of neighbors
-    if features != "symmetric_kl":
+    if metric != "symmetric_kl":
         features = features.astype(np.float32)
 
     if metric == "dot":
