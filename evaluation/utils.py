@@ -11,6 +11,8 @@ from scipy.spatial import distance
 import itertools
 from sklearn.preprocessing import normalize
 from src.poisson_model import PoissonModel
+from torch.distributions.constraints import symmetric
+
 from src.nonlinear import NonLinearModel
 from scipy.optimize import linear_sum_assignment
 
@@ -19,6 +21,61 @@ MODEL2BATCH_SIZE = {
     "kmerprofile": -1, "poisson": -1, "nonlinear": -1, "kum": -1,
 }
 
+def kl_div_cdist(means1, variances1, means2, variances2, eps=1e-6):
+    variances1 = variances1 + eps  # Avoid division by zero
+    variances2 = variances2 + eps
+
+    log_variances1 = np.log(variances1)
+    log_variances2 = np.log(variances2)
+
+    trace_term = np.sum(variances1 / variances2, axis=1)  # Sum over features (d)
+    quadratic_term = np.sum((means1 - means2) ** 2 / variances2, axis=1)
+    log_det_term = np.sum(log_variances2 - log_variances1, axis=1)
+
+    kl_div = 0.5 * (trace_term + quadratic_term - means1.shape[1] + log_det_term)
+
+    return kl_div
+
+
+def kl_div_pdist(means, variances, eps=1e-6):
+    """
+    0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
+    """
+    variances = variances + eps
+    log_variances = np.log(variances)
+
+    n, d = means.shape
+    means1 = means[:, np.newaxis, :]  # (n, 1, d)
+    means2 = means[np.newaxis, :, :]  # (1, n, d)
+
+    vars1 = variances[:, np.newaxis, :]
+    vars2 = variances[np.newaxis, :, :]
+
+    log_vars1 = log_variances[:, np.newaxis, :]
+    log_vars2 = log_variances[np.newaxis, :, :]
+
+    trace_term = np.sum(vars1 / vars2, axis=2)  # (n, n)
+    quadratic_term = np.sum((means1 - means2) ** 2 / vars2, axis=2)  # (n, n)
+    log_det_term = np.sum(log_vars2 - log_vars1, axis=2)  # (n, n)
+
+    kl_matrix = 0.5 * (trace_term + quadratic_term - d + log_det_term)
+    np.fill_diagonal(kl_matrix, 0)  # KL divergence with itself is 0
+
+    return kl_matrix
+
+def compute_kl_div(mean1, cov1, mean2, cov2):
+    """
+    Compute the KL divergence between two Gaussian distributions with diagonal covariance matrices
+    0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
+    """
+
+    mean_dif = mean2 - mean1
+    cov2_inv = 1. / cov2
+
+    return 0.5 * (
+            (torch.log(cov2).sum(dim=1) - torch.log(cov1).sum(dim=1)) - mean1.shape[1] +
+            (cov2_inv * cov1).sum(dim=1) + (mean_dif * cov2_inv * mean_dif).sum(dim=1)
+    )
 
 def get_embedding(
         dna_sequences, model_name, species, sample, k=4,
@@ -123,6 +180,8 @@ def get_embedding(
             nlm.load_state_dict(model_state_dict)
             embedding, covs = nlm.read2emb(dna_sequences)
             print(f"Min cov value: {covs.min()}, Max cov value: {covs.max()}")
+            # :TODO: This is a temporary fix
+            embedding = (embedding, covs)
 
         else:
             raise ValueError(f"Unknown model {model_name}")
@@ -254,6 +313,13 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
         similarities = np.exp(-distance.squareform(distance.pdist(features, 'euclidean')))
     elif metric == "l1":
         similarities = np.exp(-distance.squareform(distance.pdist(features, 'minkowski', p=1.)))
+    elif metric == "symmetric_kl":
+
+        embs, cov = features
+        kl_div = kl_div_pdist(embs, cov)
+        kl_symmetric = kl_div + kl_div.T
+        similarities = np.exp(-kl_symmetric)
+
     else:
         raise ValueError("Invalid metric!")
 
@@ -347,7 +413,11 @@ def align_labels_via_hungarian_algorithm(true_labels, predicted_labels):
 
 def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
     idx = np.argsort(labels)
-    embeddings = embeddings[idx]
+    if metric == "symmetric_kl":
+        means, covs = embeddings
+        means, covs = means[idx], covs[idx]
+    else:
+        embeddings = embeddings[idx]
     labels = labels[idx]
     n_sample_per_class = np.bincount(labels)
 
@@ -357,7 +427,13 @@ def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
     for i in range(len(n_sample_per_class)):
         start = count
         end = count + n_sample_per_class[i]
-        mean = np.mean(embeddings[start:end], axis=0)
+
+        if metric == "symmetric_kl":
+            mean = np.mean(means[start:end], axis=0)
+            cov = np.mean(covs[start:end], axis=0) / (end-start)
+        else:
+            mean = np.mean(embeddings[start:end], axis=0)
+
         if metric == "dot":
             similarities = np.dot(mean, embeddings[start:end].T).reshape(-1)
         elif metric == "euclidean" or metric == "l2":
@@ -368,6 +444,17 @@ def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
             similarities = np.exp(
                 -distance.cdist(np.expand_dims(mean, axis=0), embeddings[start:end], 'minkowski', p=1.).reshape(-1)
             )
+        elif metric == "symmetric_kl":
+
+
+            # :TODO
+            symmetric_kl = kl_div_cdist(
+                np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
+            ) + kl_div_cdist(
+                means[start:end], covs[start:end], np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0)
+            )
+            similarities = np.exp( -symmetric_kl )
+
         else:
             raise ValueError("Invalid metric!")
 

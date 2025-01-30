@@ -32,8 +32,6 @@ def main(args):
                         metric = "l1"
                     elif model_name == "nonlinear":
                         metric = "l2"
-                    elif model_name == "kum":
-                        metric = "l2"
                     else:
                         metric = "dot"
 
