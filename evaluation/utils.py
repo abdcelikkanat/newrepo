@@ -413,7 +413,10 @@ def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
     labels = labels[idx]
     n_sample_per_class = np.bincount(labels)
 
-    all_similarities = np.zeros(len(embeddings))
+    if metric == "symmetric_kl":
+        all_similarities = np.zeros(len(means))
+    else:
+        all_similarities = np.zeros(len(embeddings))
     count = 0
 
     for i in range(len(n_sample_per_class)):
@@ -437,22 +440,22 @@ def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
                 -distance.cdist(np.expand_dims(mean, axis=0), embeddings[start:end], 'minkowski', p=1.).reshape(-1)
             )
         elif metric == "symmetric_kl":
-            print(f"Start: {start}, End: {end}")
-            print(f"Mean: {mean.shape}, Cov: {cov.shape}")
-            print(f"Means: {means[start:end].shape}, Covs: {covs[start:end].shape}")
-            print(kl_div_cdist(
-                np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
-            ).shape)
-            print(kl_div_cdist(
-                np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
-            ).reshape(-1).shape)
+            # print(f"Start: {start}, End: {end}")
+            # print(f"Mean: {mean.shape}, Cov: {cov.shape}")
+            # print(f"Means: {means[start:end].shape}, Covs: {covs[start:end].shape}")
+            # print(kl_div_cdist(
+            #     np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
+            # ).shape)
+            # print(kl_div_cdist(
+            #     np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
+            # ).reshape(-1).shape)
             symmetric_kl = kl_div_cdist(
                 np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
             ).reshape(-1) + kl_div_cdist(
                 means[start:end], covs[start:end], np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0)
             ).reshape(-1)
-            print(symmetric_kl)
-            print(symmetric_kl.shape)
+            # print(symmetric_kl)
+            # print(symmetric_kl.shape)
             similarities = np.exp( -symmetric_kl )
 
         else:
