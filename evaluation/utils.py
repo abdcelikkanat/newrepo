@@ -291,7 +291,9 @@ def calculate_llm_embedding(dna_sequences, model_name_or_path, model_max_length=
 
 def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric="dot", scalable=False):
     # rank nodes by the number of neighbors
-    features = features.astype(np.float32)
+    if features != "symmetric_kl":
+        features = features.astype(np.float32)
+
     if metric == "dot":
 
         if scalable:
@@ -308,6 +310,9 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
     elif metric == "symmetric_kl":
 
         embs, cov = features
+        embs = embs.astype(np.float32)
+        cov = cov.astype(np.float32)
+
         kl_div = kl_div_pdist(embs, cov)
         kl_symmetric = kl_div + kl_div.T
         similarities = np.exp(-kl_symmetric)
@@ -440,22 +445,13 @@ def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
                 -distance.cdist(np.expand_dims(mean, axis=0), embeddings[start:end], 'minkowski', p=1.).reshape(-1)
             )
         elif metric == "symmetric_kl":
-            # print(f"Start: {start}, End: {end}")
-            # print(f"Mean: {mean.shape}, Cov: {cov.shape}")
-            # print(f"Means: {means[start:end].shape}, Covs: {covs[start:end].shape}")
-            # print(kl_div_cdist(
-            #     np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
-            # ).shape)
-            # print(kl_div_cdist(
-            #     np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
-            # ).reshape(-1).shape)
+
             symmetric_kl = kl_div_cdist(
                 np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
             ).reshape(-1) + kl_div_cdist(
                 means[start:end], covs[start:end], np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0)
             ).reshape(-1)
-            # print(symmetric_kl)
-            # print(symmetric_kl.shape)
+
             similarities = np.exp( -symmetric_kl )
 
         else:
