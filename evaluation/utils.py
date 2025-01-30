@@ -446,13 +446,11 @@ def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
             )
         elif metric == "symmetric_kl":
 
-
-            # :TODO
             symmetric_kl = kl_div_cdist(
                 np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
-            ) + kl_div_cdist(
+            ).reshape(-1) + kl_div_cdist(
                 means[start:end], covs[start:end], np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0)
-            )
+            ).reshape(-1)
             similarities = np.exp( -symmetric_kl )
 
         else:
