@@ -215,6 +215,21 @@ def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
 
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
+    elif name == "bern-mls":
+        """
+        Implementation of the metric given in the paper "Probabilistic face embeddings." by Yichun Shi, Anil K. Jain
+        """
+
+        return ( (2*labels - 1) * 0.5 * torch.sum(
+            (left_mean - right_mean) ** 2 / (left_cov + right_cov) + torch.log(left_cov + right_cov), dim=1
+        ) ).mean()
+
+    elif name == "wasserstein":
+
+        return ( (2*labels - 1) * (
+            torch.sum((left_mean - right_mean)**2, dim=1) + torch.sum(left_cov + right_cov - 2*(left_cov*right_cov)**0.5, dim=1)
+        )).mean()
+
     else:
         raise ValueError(f"Unknown loss function name: {name}")
 
@@ -316,7 +331,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=0, help='Batch size (0: no batch)')
     parser.add_argument('--device', type=str, default="cpu", help='Device (cpu or cuda)')
     parser.add_argument('--workers_num', type=int, default=1, help='Number of workers for data loader')
-    parser.add_argument('--loss_name', type=str, default="symmetric_kl", help='Loss function (kl, symmetric_kl)')
+    parser.add_argument('--loss_name', type=str, default="symmetric_kl", help='Loss function (kl, symmetric_kl, bern-mls, wasserstein)')
     parser.add_argument('--output', type=str, help='Output file')
     parser.add_argument('--seed', type=int, default=26042024, help='Seed for random number generator')
     parser.add_argument('--checkpoint', type=int, default=0, help='Save the model for every checkpoint epoch')
