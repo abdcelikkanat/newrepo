@@ -28,12 +28,7 @@ def main(args):
                 if args.metric != None:
                     metric = args.metric
                 else:
-                    if model_name == "kmerprofile":
-                        metric = "l1"
-                    elif model_name == "nonlinear":
-                        metric = "l2"
-                    else:
-                        metric = "dot"
+                    raise ValueError(f"Metric was not chosen for the model {model_name}")
 
                 print(f"Model: {model_name} Species: {species} Sample ID: {sample} Metric: {metric}")
 
@@ -43,23 +38,28 @@ def main(args):
                     reader = csv.reader(f, delimiter="\t")
                     data = list(reader)[1:]
 
-                # Shorten the sequences if they are longer than the
+                # Shorten the sequences if they are longer than the MAX_SEQ_LEN value
                 dna_sequences = [d[0][:MAX_SEQ_LEN] for d in data]
                 labels = [d[1] for d in data]
 
-                # convert labels to numeric values
+                # Convert the sequence labels to numeric values
                 label2id = {l: i for i, l in enumerate(set(labels))}
                 labels = np.array([label2id[l] for l in labels])
                 num_clusters = len(label2id)
                 print(f"Clustering data contains {len(dna_sequences)} sequences with {num_clusters} clusters.")
 
-                # Get embeddings
-                embedding = get_embedding(
+                # Define the embedding file path. If the file exist, we don't need to recompute the dna embeddings
+                embedding_file_path = os.path.join(
+                    "temp_dna_embeddings", species, f"clustering_{sample}{args.suffix}", f"{model_name}.npy"
+                )
+                # Get embeddings (and covariances) of the sequences in the dataset named clustering
+                features = get_embedding(
                     dna_sequences=dna_sequences, model_name=model_name, species=species, sample=0,
-                    k=args.k, task_name="clustering", test_model_dir=args.test_model_dir, suffix=args.suffix,
+                    k=args.k, test_model_dir=args.test_model_dir, embedding_file_path=embedding_file_path,
                 )
 
-                percentile_values = compute_class_center_medium_similarity(embedding, labels, metric=metric)
+                # We need to compute the similarity threshold that is required for the k-medoid algorithm
+                percentile_values = compute_class_center_medium_similarity(features, labels, metric=metric)
                 threshold = percentile_values[-3]
                 print(f"Threshold value: {threshold}")
 
@@ -73,32 +73,36 @@ def main(args):
                 dna_sequences = [d[0][:MAX_SEQ_LEN] for d in data]
                 labels_bin = [d[1] for d in data]
 
-                # filter sequences with length < 2500
+                # Filter sequences with length < 2500
                 filterd_idx = [i for i, seq in enumerate(dna_sequences) if len(seq) >= MIN_SEQ_LEN]
                 dna_sequences = [dna_sequences[i] for i in filterd_idx]
                 labels_bin = [labels_bin[i] for i in filterd_idx]
 
-                # filter sequences with low abundance labels (less than 10)
+                # Filter sequences with low abundance labels (less than 10)
                 label_counts = collections.Counter(labels_bin)
                 filterd_idx = [i for i, l in enumerate(labels_bin) if label_counts[l] >= MIN_ABUNDANCE_VALUE]
                 dna_sequences = [dna_sequences[i] for i in filterd_idx]
                 labels_bin = [labels_bin[i] for i in filterd_idx]
 
-                # convert labels to numeric values
+                # Convert labels to numeric values
                 label2id = {l: i for i, l in enumerate(set(labels_bin))}
                 labels_bin = np.array([label2id[l] for l in labels_bin])
                 num_clusters = len(label2id)
                 print(f"Get {len(dna_sequences)} sequences, {num_clusters} clusters")
 
+                # Define the embedding file path. If the file exist, we don't recompute the dna embeddings
+                embedding_file_path = os.path.join(
+                    "temp_dna_embeddings", species, f"binning_{sample}{args.suffix}", f"{model_name}.npy"
+                )
                 # Generate embeddings for the binning set
-                embedding = get_embedding(
-                    dna_sequences, model_name, species, sample, k=args.k, metric=metric,
-                    task_name="binning", test_model_dir=args.test_model_dir, suffix=args.suffix,
+                features = get_embedding(
+                    dna_sequences=dna_sequences, model_name=model_name, species=species, sample=sample,
+                    k=args.k, test_model_dir=args.test_model_dir, embedding_file_path=embedding_file_path,
                 )
 
-                # Run the KMedoid algorithm
+                # Run the k-medoid algorithm
                 binning_results = KMedoid(
-                    embedding, min_similarity=threshold, min_bin_size=10,
+                    features, min_similarity=threshold, min_bin_size=10,
                     max_iter=1000, metric=metric, scalable=args.scalable
                 )
 

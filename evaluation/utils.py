@@ -11,83 +11,34 @@ from scipy.spatial import distance
 import itertools
 from sklearn.preprocessing import normalize
 from src.poisson_model import PoissonModel
-from torch.distributions.constraints import symmetric
-
 from src.nonlinear import NonLinearModel
 from scipy.optimize import linear_sum_assignment
 
-MODEL2BATCH_SIZE = {
-    "tnf": 100, "tnf_k": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
-    "kmerprofile": -1, "poisson": -1, "nonlinear": -1, "kum": -1,
-}
+# # Here, we define the batch sizes for inference. It might be important for the memory requirements of the model.
+# MODEL2BATCH_SIZE = {
+#     "tnf": 100, "tnf_k": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
+#     "kmerprofile": -1, "poisson": -1, "nonlinear": -1, "kum": -1,
+# }
 
-def kl_div_cdist(means1, variances1, means2, variances2, eps=1e-6):
-    """
-        0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
-        """
-    variances1 = variances1 + eps
-    log_variances1 = np.log(variances1)
-    variances2 = variances2 + eps
-    log_variances2 = np.log(variances2)
-
-    d = means1.shape[1]
-    means1 = means1[:, np.newaxis, :]  # (n, 1, d)
-    means2 = means2[np.newaxis, :, :]  # (1, n, d)
-
-    vars1 = variances1[:, np.newaxis, :]
-    vars2 = variances2[np.newaxis, :, :]
-
-    log_vars1 = log_variances1[:, np.newaxis, :]
-    log_vars2 = log_variances2[np.newaxis, :, :]
-
-    trace_term = np.sum(vars1 / vars2, axis=2)  # (n, n)
-    quadratic_term = np.sum((means1 - means2) ** 2 / vars2, axis=2)  # (n, n)
-    log_det_term = np.sum(log_vars2 - log_vars1, axis=2)  # (n, n)
-
-    kl_matrix = 0.5 * (trace_term + quadratic_term - d + log_det_term)
-    # np.fill_diagonal(kl_matrix, 0)  # KL divergence with itself is 0
-
-    return kl_matrix
-
-
-def kl_div_pdist(means, variances, eps=1e-6):
-
-    return kl_div_cdist(means, variances, means, variances, eps=eps)
-
-
-def compute_kl_div(mean1, cov1, mean2, cov2):
-    """
-    Compute the KL divergence between two Gaussian distributions with diagonal covariance matrices
-    0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
-    """
-
-    mean_dif = mean2 - mean1
-    cov2_inv = 1. / cov2
-
-    return 0.5 * (
-            (torch.log(cov2).sum(dim=1) - torch.log(cov1).sum(dim=1)) - mean1.shape[1] +
-            (cov2_inv * cov1).sum(dim=1) + (mean_dif * cov2_inv * mean_dif).sum(dim=1)
-    )
 
 def get_embedding(
-        dna_sequences, model_name, species, sample, k=4,
-        metric=None, task_name="clustering", test_model_dir=None, suffix=""
+        dna_sequences, model_name, species, sample, k=4, test_model_dir=None, embedding_file_path = None,
 ):
-    #
-    # model2batch_size = {
-    #     "tnf": 100, "tnf_k": 100, "dna2vec": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
-    #     "nonlinear": -1, "poisson_model": -1, "linear": -1
-    # }
+    """
+    Get the embeddings (and covariances dependindg on method) of the DNA sequences using the specified model.
+
+    """
+
+    # Define the batch size to get the embeddings
+    # This is for inference only, not training and it is important for the memory requirements
     batch_size = 10  # MODEL2BATCH_SIZE[model_name]
 
-    # Define the embedding directory and path
-    embedding_file_dir = os.path.join("embeddings", species, f"{task_name}_{sample}{suffix}")
-    embedding_file_path = os.path.join(embedding_file_dir, f"{model_name}.npy")
+    assert embedding_file_path is not None, "The embedding file path must be provided!"
 
     # Load the embedding file if it exits
     if os.path.exists(embedding_file_path):
-        print(f"Load embedding from file {embedding_file_path}")
-        embedding = np.load(embedding_file_path)
+        print(f"Load embeddings from file {embedding_file_path}")
+        output = np.load(embedding_file_path)
 
     else:
         print(f"Calculate embedding for {model_name} {species} {sample}")
@@ -95,12 +46,12 @@ def get_embedding(
         if model_name == "tnf":
 
             embedding = calculate_tnf(dna_sequences)
-            embedding = normalize(embedding, norm='l2')
+            output = normalize(embedding, norm='l2')
 
         elif model_name == "tnf_k":
 
             embedding = calculate_tnf(dna_sequences, kernel=True)
-            embedding = normalize(embedding, norm='l2')
+            output = normalize(embedding, norm='l2')
 
         elif model_name == "hyenadna":
 
@@ -110,7 +61,7 @@ def get_embedding(
                 model_max_length=20000,
                 batch_size=batch_size
             )
-            embedding = normalize(embedding, norm='l2')
+            output = normalize(embedding, norm='l2')
 
         elif model_name == "dnabert2":
 
@@ -120,7 +71,7 @@ def get_embedding(
                 model_max_length=5000,
                 batch_size=batch_size
             )
-            embedding = normalize(embedding, norm='l2')
+            output = normalize(embedding, norm='l2')
 
         elif model_name == "nt":
 
@@ -130,7 +81,7 @@ def get_embedding(
                 model_max_length=2048,
                 batch_size=batch_size
             )
-            embedding = normalize(embedding, norm='l2')
+            output = normalize(embedding, norm='l2')
 
         elif model_name == "dnaberts":
 
@@ -140,13 +91,13 @@ def get_embedding(
                 model_max_length=5000,
                 batch_size=batch_size
             )
-            embedding = normalize(embedding, norm='l2')
+            output = normalize(embedding, norm='l2')
 
         elif model_name == "kmerprofile":
 
-            norm = 'l1' if metric is None else metric
+            norm = 'l1'
             embedding = calculate_tnf(dna_sequences, k=k)
-            embedding = normalize(embedding, norm=norm)
+            output = normalize(embedding, norm=norm)
 
         elif model_name == "poisson":
 
@@ -154,7 +105,7 @@ def get_embedding(
             kwargs['device'] = "cpu"
             pm = PoissonModel(**kwargs)
             pm.load_state_dict(model_state_dict)
-            embedding = pm.read2emb(dna_sequences)
+            output = pm.read2emb(dna_sequences)
 
         elif model_name == "nonlinear":
 
@@ -162,7 +113,7 @@ def get_embedding(
             kwargs['device'] = "cpu"
             nlm = NonLinearModel(**kwargs)
             nlm.load_state_dict(model_state_dict)
-            embedding = nlm.read2emb(dna_sequences)
+            output = nlm.read2emb(dna_sequences)
 
         elif model_name == "kum":
 
@@ -171,19 +122,136 @@ def get_embedding(
             nlm = NonLinearModel(**kwargs)
             nlm.load_state_dict(model_state_dict)
             embedding, covs = nlm.read2emb(dna_sequences)
-            print(f"Min cov value: {covs.min()}, Max cov value: {covs.max()}")
-            # :TODO: This is a temporary fix
-            embedding = (embedding, covs)
+            # Note that the output is a tuple of embedding and covariances
+            output = (embedding, covs)
 
         else:
             raise ValueError(f"Unknown model {model_name}")
 
+        # Get the directory of the embedding file
+        embedding_file_dir = os.path.dirname(embedding_file_path)
         # Save the embedding file
         os.makedirs(embedding_file_dir, exist_ok=True)
         with open(embedding_file_path, 'wb') as f:
-            np.save(f, embedding)
+            np.save(f, output)
 
-    return embedding
+    return output
+
+def compute_class_center_medium_similarity(features, labels, metric="dot"):
+
+    # Sort the embeddings (and covariances if exists) by labels
+    idx = np.argsort(labels)
+    labels = labels[idx]
+    if type(features) == tuple:
+        embeddings, covs = features
+        embeddings, covs = embeddings[idx], covs[idx]
+    else:
+        embeddings = features[idx]
+
+    # Get the counts of samples per class, i.e. the number of samples per class
+    n_sample_per_class = np.bincount(labels)
+
+    # We will compute the similarities between the class centers and the samples. Each entry in the all_similarities
+    # array will store the similarity between the corresponding embedding and its class center it belongs to.
+    all_similarities = np.zeros(len(embeddings))
+
+    # Iterate over each class
+    count = 0
+    for i in range(len(n_sample_per_class)):
+        # Get the start and end indices of the embeddings located at the class i
+        start = count
+        end = count + n_sample_per_class[i]
+
+        # Get the mean of the embedding vectors located at the start:end indices
+        features1 = np.mean(embeddings[start:end], axis=0, keepdims=True)
+        # Define the second set of features as the embeddings located at the start:end indices
+        features2 = embeddings[start:end]
+
+        # If covariances are provided, we also need to get the mean of the covariances
+        if metric == "symmetric_kl":
+            features1 = (features1, np.mean(covs[start:end], axis=0, keepdims=True))
+            features2 = (features2, covs[start:end])
+
+        # Compute the similarity matrix between the two sets of features
+        similarities = compute_similarity_matrix(features1=features1, features2=features2, metric=metric).reshape(-1)
+
+        # Store the similarities in the all_similarities array
+        all_similarities[start:end] = similarities
+
+        count += n_sample_per_class[i]
+
+    all_similarities.sort()
+    percentile_values = []
+    for percentile in [10, 20, 30, 40, 50, 60, 70, 80, 90]:
+        value = all_similarities[int(percentile / 100 * len(embeddings))]
+        percentile_values.append(value)
+    print("Percentile values:", percentile_values)
+
+    return percentile_values
+
+def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric="dot", scalable=False):
+
+    # Compute the similarities between the features
+    similarities = compute_similarity_matrix(features, metric=metric, scalable=scalable)
+
+    # Set the values below min_similarity to 0
+    similarities[similarities < min_similarity] = 0
+
+    p = -np.ones(len(features[0]), dtype=int) if type(features) == tuple else -np.ones(len(features), dtype=int)
+    row_sum = np.sum(similarities, axis=1)
+
+    iter_count = 1
+    while np.any(p == -1):
+
+        if iter_count == max_iter:
+            break
+
+        # Select the seed index, i.e. medoid index (Line 4)
+        s = np.argmax(row_sum)
+        # Initialize the current medoid (Line 4)
+        current_medoid = (features[0][s], features[1][s]) if type(features) == tuple else features[s]
+        selected_idx = None
+        # Optimize the current medoid (Line 5-8)
+        for t in range(3):
+            # For the current medoid, find its similarities
+            if type(features) == tuple:
+                features2 = (np.expand_dims(current_medoid[0], axis=0), np.expand_dims(current_medoid[1], axis=0))
+            else:
+                features2 = np.expand_dims(current_medoid, axis=0)
+            similarity = compute_similarity_matrix(
+                features1=features, features2=features2, metric=metric
+            ).squeeze()
+
+            # Determine the indices that are within the similarity threshold
+            idx_within = similarity >= min_similarity
+            # Determine the available indices, i.e. the indices that have not been assigned to a cluster yet
+            idx_available = p == -1
+            # Get the indices that are both within the similarity threshold and available
+            selected_idx = np.where(np.logical_and(idx_within, idx_available))[0]
+            # Determine the new k-medoid
+            if type(features) == tuple:
+                current_medoid = (np.mean(features[0][selected_idx], axis=0), np.mean(features[1][selected_idx], axis=0))
+            else:
+                current_medoid = np.mean(features[selected_idx], axis=0)
+
+        # Assign the cluster labels and update the row sums (Lines 9-10)
+        if selected_idx is not None:
+            p[selected_idx] = iter_count
+            row_sum -= np.sum(similarities[:, selected_idx], axis=1)
+            row_sum[selected_idx] = 0
+            print(f"Current label: {iter_count}, Number of assigned elements: {len(selected_idx)}")
+        else:
+            raise ValueError("No selected index")
+
+        iter_count += 1
+
+    # remove bins that are too small
+    unique, counts = np.unique(p, return_counts=True)
+    for label, count in zip(unique, counts):
+        if count < min_bin_size:
+            p[p == label] = -1
+
+    return p
 
 
 def calculate_tnf(dna_sequences, kernel=False, k=4):
@@ -289,98 +357,6 @@ def calculate_llm_embedding(dna_sequences, model_name_or_path, model_max_length=
     return embeddings
 
 
-def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric="dot", scalable=False):
-    # rank nodes by the number of neighbors
-    if metric != "symmetric_kl":
-        features = features.astype(np.float32)
-
-    if metric == "dot":
-
-        if scalable:
-            similarities = np.zeros((features.shape[0], features.shape[0]))
-            for i in range(0, features.shape[0], 512):
-                similarities[i:i + 512, :] = features[i:i + 512, :] @ features.T
-        else:
-            similarities = np.dot(features, features.T)
-
-    elif metric == "euclidean" or metric == "l2":
-        similarities = np.exp(-distance.squareform(distance.pdist(features, 'euclidean')))
-    elif metric == "l1":
-        similarities = np.exp(-distance.squareform(distance.pdist(features, 'minkowski', p=1.)))
-    elif metric == "symmetric_kl":
-
-        embs, cov = features
-        embs = embs.astype(np.float32)
-        cov = cov.astype(np.float32)
-
-        kl_div = kl_div_pdist(embs, cov)
-        kl_symmetric = kl_div + kl_div.T
-        similarities = np.exp(-kl_symmetric)
-
-    else:
-        raise ValueError("Invalid metric!")
-
-    # set the values below min_similarity to 0
-    similarities[similarities < min_similarity] = 0
-
-    p = -np.ones(len(features), dtype=int)
-    row_sum = np.sum(similarities, axis=1)
-
-    iter_count = 1
-    while np.any(p == -1):
-
-        if iter_count == max_iter:
-            break
-
-        # Select the seed index, i.e. medoid index (Line 4)
-        s = np.argmax(row_sum)
-        # Initialize the current medoid (Line 4)
-        current_medoid = features[s]
-        selected_idx = None
-        # Optimize the current medoid (Line 5-8)
-        for t in range(3):
-            # For the current medoid, find its similarities
-            if metric == "dot":
-                similarity = np.dot(features, current_medoid)
-            elif metric == "euclidean" or metric == "l2":
-                similarity = np.exp(
-                    -distance.cdist(features, np.expand_dims(current_medoid, axis=0), 'euclidean')
-                ).squeeze()
-            elif metric == "l1":
-                similarity = np.exp(
-                    -distance.cdist(features, np.expand_dims(current_medoid, axis=0), 'minkowski', p=1.)
-                ).squeeze()
-            else:
-                raise ValueError("Invalid metric!")
-            # Determine the indices that are within the similarity threshold
-            idx_within = similarity >= min_similarity
-            # Determine the available indices, i.e. the indices that have not been assigned to a cluster yet
-            idx_available = p == -1
-            # Get the indices that are both within the similarity threshold and available
-            selected_idx = np.where(np.logical_and(idx_within, idx_available))[0]
-            # Determine the new medoid
-            current_medoid = np.mean(features[selected_idx], axis=0)
-
-        # Assign the cluster labels and update the row sums (Lines 9-10)
-        if selected_idx is not None:
-            p[selected_idx] = iter_count
-            row_sum -= np.sum(similarities[:, selected_idx], axis=1)
-            row_sum[selected_idx] = 0
-            print(f"Current label: {iter_count}, Number of assigned elements: {len(selected_idx)}")
-        else:
-            raise ValueError("No selected index")
-
-        iter_count += 1
-
-    # remove bins that are too small
-    unique, counts = np.unique(p, return_counts=True)
-    for label, count in zip(unique, counts):
-        if count < min_bin_size:
-            p[p == label] = -1
-
-    return p
-
-
 def align_labels_via_hungarian_algorithm(true_labels, predicted_labels):
     """
     Aligns the predicted labels with the true labels using the Hungarian algorithm.
@@ -408,64 +384,72 @@ def align_labels_via_hungarian_algorithm(true_labels, predicted_labels):
     return label_mapping
 
 
-def compute_class_center_medium_similarity(embeddings, labels, metric="dot"):
-    idx = np.argsort(labels)
-    if metric == "symmetric_kl":
-        means, covs = embeddings
-        means, covs = means[idx], covs[idx]
-    else:
-        embeddings = embeddings[idx]
-    labels = labels[idx]
-    n_sample_per_class = np.bincount(labels)
+def compute_similarity_matrix(features1, features2 = None, metric="dot", scalable=False):
+    """
+    Compute the similarity matrix between two sets of features
+    """
+    if features2 is None:
+        features2 = features1
 
-    if metric == "symmetric_kl":
-        all_similarities = np.zeros(len(means))
-    else:
-        all_similarities = np.zeros(len(embeddings))
-    count = 0
+    if metric == "dot":
 
-    for i in range(len(n_sample_per_class)):
-        start = count
-        end = count + n_sample_per_class[i]
-
-        if metric == "symmetric_kl":
-            mean = np.mean(means[start:end], axis=0)
-            cov = np.mean(covs[start:end], axis=0) / (end-start)
+        if scalable:
+            similarities = np.zeros((features1.shape[0], features2.shape[0]))
+            for i in range(0, features1.shape[0], 512):
+                similarities[i:i + 512, :] = features1[i:i + 512, :] @ features2.T
         else:
-            mean = np.mean(embeddings[start:end], axis=0)
+            similarities = np.dot(features1, features2.T)
 
-        if metric == "dot":
-            similarities = np.dot(mean, embeddings[start:end].T).reshape(-1)
-        elif metric == "euclidean" or metric == "l2":
-            similarities = np.exp(
-                -distance.cdist(np.expand_dims(mean, axis=0), embeddings[start:end], 'minkowski', p=2.).reshape(-1)
-            )
-        elif metric == "l1":
-            similarities = np.exp(
-                -distance.cdist(np.expand_dims(mean, axis=0), embeddings[start:end], 'minkowski', p=1.).reshape(-1)
-            )
-        elif metric == "symmetric_kl":
+    elif metric == "euclidean" or metric == "l2":
 
-            symmetric_kl = kl_div_cdist(
-                np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0), means[start:end], covs[start:end]
-            ).reshape(-1) + kl_div_cdist(
-                means[start:end], covs[start:end], np.expand_dims(mean, axis=0), np.expand_dims(cov, axis=0)
-            ).reshape(-1)
+        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.))
 
-            similarities = np.exp( -symmetric_kl )
+    elif metric == "l1":
 
-        else:
-            raise ValueError("Invalid metric!")
+        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=1))
 
-        all_similarities[start:end] = similarities
+    elif metric == "symmetric_kl":
 
-        count += n_sample_per_class[i]
+        means1, covs1 = features1
+        means2, covs2 = features2
 
-    all_similarities.sort()
-    percentile_values = []
-    for percentile in [10, 20, 30, 40, 50, 60, 70, 80, 90]:
-        value = all_similarities[int(percentile / 100 * len(embeddings))]
-        percentile_values.append(value)
-    print("Percentile values:", percentile_values)
+        kl_symmetric = kl_div_cdist(means1, covs1, means2, covs2) + kl_div_cdist(means2, covs2, means1, covs1).T
+        similarities = np.exp(-kl_symmetric)
 
-    return percentile_values
+    else:
+        raise ValueError("Invalid metric!")
+
+    return similarities
+
+def kl_div_cdist(means1, variances1, means2, variances2, eps=1e-6):
+    """
+        0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
+        """
+    variances1 = variances1 + eps
+    log_variances1 = np.log(variances1)
+    variances2 = variances2 + eps
+    log_variances2 = np.log(variances2)
+
+    d = means1.shape[1]
+    means1 = means1[:, np.newaxis, :]  # (n, 1, d)
+    means2 = means2[np.newaxis, :, :]  # (1, n, d)
+
+    vars1 = variances1[:, np.newaxis, :]
+    vars2 = variances2[np.newaxis, :, :]
+
+    log_vars1 = log_variances1[:, np.newaxis, :]
+    log_vars2 = log_variances2[np.newaxis, :, :]
+
+    trace_term = np.sum(vars1 / vars2, axis=2)  # (n, n)
+    quadratic_term = np.sum((means1 - means2) ** 2 / vars2, axis=2)  # (n, n)
+    log_det_term = np.sum(log_vars2 - log_vars1, axis=2)  # (n, n)
+
+    kl_matrix = 0.5 * (trace_term + quadratic_term - d + log_det_term)
+    # np.fill_diagonal(kl_matrix, 0)  # KL divergence with itself is 0
+
+    return kl_matrix
+
+
+def kl_div_pdist(means, variances, eps=1e-6):
+
+    return kl_div_cdist(means, variances, means, variances, eps=eps)
