@@ -393,6 +393,9 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
 
     if metric == "dot":
 
+        if type(features1) == tuple:
+            features1, features2 = features1[0], features2[0]
+
         if scalable:
             similarities = np.zeros((features1.shape[0], features2.shape[0]))
             for i in range(0, features1.shape[0], 512):
@@ -402,13 +405,22 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
 
     elif metric == "euclidean" or metric == "l2":
 
+        if type(features1) == tuple:
+            features1, features2 = features1[0], features2[0]
+
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.))
 
     elif metric == "l1":
 
+        if type(features1) == tuple:
+            features1, features2 = features1[0], features2[0]
+
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=1))
 
     elif metric == "symmetric_kl":
+
+        if type(features1) != tuple:
+            raise ValueError("For the symmetric_kl metric, we need covariance entries!")
 
         means1, covs1 = features1
         means2, covs2 = features2
