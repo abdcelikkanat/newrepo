@@ -428,6 +428,36 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
         kl_symmetric = kl_div_cdist(means1, covs1, means2, covs2) + kl_div_cdist(means2, covs2, means1, covs1).T
         similarities = np.exp(-kl_symmetric)
 
+    elif metric == "bern-mls":
+        """
+        In the implementation, similarities are defined as exp(-dist).
+        """
+
+        if type(features1) != tuple:
+            raise ValueError("For the symmetric_kl metric, we need covariance entries!")
+
+        means1, covs1 = features1
+        means2, covs2 = features2
+
+        similarities = np.exp(- 0.5 * np.sum(
+            (means1 - means2) ** 2 / (covs1 + covs2) + torch.log(covs1 + covs2), axis=1
+        ) )
+
+    elif metric == "wasserstein":
+        """
+        In the implementation, similarities are defined as exp(-dist).
+        """
+
+        if type(features1) != tuple:
+            raise ValueError("For the symmetric_kl metric, we need covariance entries!")
+
+        means1, covs1 = features1
+        means2, covs2 = features2
+
+        similarities = np.exp(-(
+                np.sum((means1 - means2) ** 2, axis=1) + np.sum(covs1 + covs2 - 2 * (covs1 * covs2) ** 0.5, axis=1)
+        ))
+
     else:
         raise ValueError("Invalid metric!")
 
