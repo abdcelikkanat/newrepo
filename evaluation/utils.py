@@ -434,7 +434,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
         """
 
         if type(features1) != tuple:
-            raise ValueError("For the symmetric_kl metric, we need covariance entries!")
+            raise ValueError("For the bern-mls metric, we need covariance entries!")
 
         means1, covs1 = features1
         means2, covs2 = features2
@@ -449,7 +449,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
         """
 
         if type(features1) != tuple:
-            raise ValueError("For the symmetric_kl metric, we need covariance entries!")
+            raise ValueError("For the wasserstein metric, we need covariance entries!")
 
         means1, covs1 = features1
         means2, covs2 = features2

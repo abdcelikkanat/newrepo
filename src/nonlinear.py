@@ -215,7 +215,7 @@ def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
 
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
-    elif name == "bern-mls":
+    elif name == "mls":
         """
         Implementation of the metric given in the paper "Probabilistic face embeddings." by Yichun Shi, Anil K. Jain
         """
@@ -224,11 +224,25 @@ def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
             (left_mean - right_mean) ** 2 / (left_cov + right_cov) + torch.log(left_cov + right_cov), dim=1
         ) ).mean()
 
+    elif name == "bern_sigmoid_mls":
+
+        return torch.nn.functional.binary_cross_entropy_with_logits(-0.5 * torch.sum(
+            (left_mean - right_mean) ** 2 / (left_cov + right_cov) + torch.log(left_cov + right_cov), dim=1
+        ), labels, reduction='mean' )
+
     elif name == "wasserstein":
 
         return ( (2*labels - 1) * (
             torch.sum((left_mean - right_mean)**2, dim=1) + torch.sum(left_cov + right_cov - 2*(left_cov*right_cov)**0.5, dim=1)
         )).mean()
+
+    elif name == "bern_wasserstein":
+
+        p = torch.exp(
+            -torch.norm(left_mean - right_mean, p=2, dim=1)**2 + torch.sum(left_cov + right_cov - 2*(left_cov*right_cov)**0.5, dim=1)
+        )
+
+        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
     else:
         raise ValueError(f"Unknown loss function name: {name}")
