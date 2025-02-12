@@ -239,10 +239,41 @@ def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
     elif name == "bern_wasserstein":
 
         p = torch.exp(
-            -torch.norm(left_mean - right_mean, p=2, dim=1)**2 + torch.sum(left_cov + right_cov - 2*(left_cov*right_cov)**0.5, dim=1)
+            -(torch.norm(left_mean - right_mean, p=2, dim=1)**2 + torch.sum(left_cov + right_cov - 2*(left_cov*right_cov)**0.5, dim=1))
         )
 
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
+
+    elif name == "bern_bhattacharyya" or "bern_bc":
+        """
+        Implementation of the Bhattacharyya distance (D_b) which is negative log of Bhattacharyya coefficient (BC)
+        : https://en.wikipedia.org/wiki/Bhattacharyya_distance
+        
+        # Thomas' impementation
+        # Calculate the Bhattacharyya coefficient
+        log_det_cov = torch.sum(torch.log(cov), dim=1)
+        log_det_left_cov = torch.sum(torch.log(left_cov), dim=1)
+        log_det_right_cov = torch.sum(torch.log(right_cov), dim=1)
+        log_term = (log_det_cov - 0.5 * (log_det_left_cov + log_det_right_cov))
+        #        Dp = 1/8 * torch.sum((left_mean - right_mean) * 1./cov * (left_mean - right_mean), dim=1) + 0.5 * torch.log(torch.prod(cov, dim=1)/(torch.sqrt(torch.prod(left_cov, dim=1)*torch.prod(right_cov, dim=1))))
+        Dp = 1 / 8 * torch.sum((left_mean - right_mean) * 1. / cov * (left_mean - right_mean), dim=1) + 0.5 * log_term
+        a = (labels * -Dp)
+        b = (1 - labels) * torch.log(torch.clamp(1 - torch.exp(-Dp), min=1e-6))
+        return -(a + b).mean()
+        """
+
+        # Cross-Entropy loss with Bhattacharyya coefficient
+        cov_avg = (left_cov + right_cov) / 2
+        mean_diff = left_mean - right_mean
+
+        # Calculate the Bhattacharyya distance
+        db = (0.125 * torch.sum(mean_diff * (1./cov_avg) * mean_diff, dim=1) +
+              0.5 * (torch.sum(torch.log(cov_avg), dim=1) - 0.5*torch.sum(torch.log(left_cov), dim=1) - 0.5*torch.sum(torch.log(right_cov), dim=1)))
+
+        p = torch.exp(-db)
+
+        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
+
 
     else:
         raise ValueError(f"Unknown loss function name: {name}")
