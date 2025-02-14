@@ -168,7 +168,7 @@ def compute_class_center_medium_similarity(features, labels, metric="dot"):
         features2 = embeddings[start:end]
 
         # If covariances are provided, we also need to get the mean of the covariances
-        if metric == "symmetric_kl":
+        if metric != "l1" or metric != "l2" or metric != "euclidean":
             features1 = (features1, np.mean(covs[start:end], axis=0, keepdims=True))
             features2 = (features2, covs[start:end])
 
@@ -466,7 +466,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
     elif metric == "bern_bhattacharyya" or "bern_bc":
 
         if type(features1) != tuple:
-            raise ValueError("For the wasserstein metric, we need covariance entries!")
+            raise ValueError("For the bhattacharyya metric, we need covariance entries!")
 
         means1, covs1 = features1
         means2, covs2 = features2
