@@ -429,9 +429,12 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
         similarities = np.exp(-kl_symmetric)
 
     elif metric == "bern-mls":
+
         """
         In the implementation, similarities are defined as exp(-dist).
         """
+
+        raise ValueError("Check the implementation!")
 
         if type(features1) != tuple:
             raise ValueError("For the bern-mls metric, we need covariance entries!")
@@ -448,6 +451,8 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
         In the implementation, similarities are defined as exp(-dist).
         """
 
+        raise ValueError("Check the implementation!")
+
         if type(features1) != tuple:
             raise ValueError("For the wasserstein metric, we need covariance entries!")
 
@@ -457,6 +462,45 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
         similarities = np.exp(-(
                 np.sum((means1 - means2) ** 2, axis=1) + np.sum(covs1 + covs2 - 2 * (covs1 * covs2) ** 0.5, axis=1)
         ))
+
+    elif metric == "bern_bhattacharyya" or "bern_bc":
+
+        if type(features1) != tuple:
+            raise ValueError("For the wasserstein metric, we need covariance entries!")
+
+        means1, covs1 = features1
+        means2, covs2 = features2
+
+        if scalable:
+            similarities = np.zeros((means1.shape[0], means2.shape[0]))
+
+            means1, covs1 = np.expand_dims(means1, axis=1), np.expand_dims(covs1, axis=1)
+            means2, covs2 = np.expand_dims(means2, axis=0), np.expand_dims(covs2, axis=0)
+
+            for i in range(0, features1.shape[0], 512):
+
+                # Cross-Entropy loss with Bhattacharyya coefficient
+                cov_avg = (covs1[i:i + 512] + covs2) / 2
+                mean_diff = means1[i:i + 512] - means2
+
+                # Calculate the Bhattacharyya distance
+                db = (0.125 * np.sum(mean_diff * (1. / cov_avg) * mean_diff, axis=-1) +
+                      0.5 * (np.sum(torch.log(cov_avg), axis=-1) - 0.5 * np.sum(torch.log(covs1[i:i + 512]), axis=-1) - 0.5 * np.sum(np.log(covs2), axis=-1)))
+
+                similarities[i:i + 512, :] = np.exp(-db)
+        else:
+
+            # Cross-Entropy loss with Bhattacharyya coefficient
+            cov_avg = (covs1 + covs2) / 2
+            mean_diff = means1 - means2
+
+            # Calculate the Bhattacharyya distance
+            db = (0.125 * torch.sum(mean_diff * (1. / cov_avg) * mean_diff, dim=1) +
+                  0.5 * (torch.sum(torch.log(cov_avg), dim=1) - 0.5 * torch.sum(torch.log(covs1),
+                                                                                dim=1) - 0.5 * torch.sum(
+                        torch.log(covs2), dim=1)))
+
+            similarities = torch.exp(-db)
 
     else:
         raise ValueError("Invalid metric!")
