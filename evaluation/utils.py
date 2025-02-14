@@ -485,7 +485,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
 
                 # Calculate the Bhattacharyya distance
                 db = (0.125 * np.sum(mean_diff * (1. / cov_avg) * mean_diff, axis=-1) +
-                      0.5 * (np.sum(torch.log(cov_avg), axis=-1) - 0.5 * np.sum(torch.log(covs1[i:i + 512]), axis=-1) - 0.5 * np.sum(np.log(covs2), axis=-1)))
+                      0.5 * (np.sum(np.log(cov_avg), axis=-1) - 0.5 * np.sum(np.log(covs1[i:i + 512]), axis=-1) - 0.5 * np.sum(np.log(covs2), axis=-1)))
 
                 similarities[i:i + 512, :] = np.exp(-db)
         else:
