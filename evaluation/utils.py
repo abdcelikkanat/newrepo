@@ -477,7 +477,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
             means1, covs1 = np.expand_dims(means1, axis=1), np.expand_dims(covs1, axis=1)
             means2, covs2 = np.expand_dims(means2, axis=0), np.expand_dims(covs2, axis=0)
 
-            for i in range(0, features1.shape[0], 512):
+            for i in range(0, means1.shape[0], 512):
 
                 # Cross-Entropy loss with Bhattacharyya coefficient
                 cov_avg = (covs1[i:i + 512] + covs2) / 2
