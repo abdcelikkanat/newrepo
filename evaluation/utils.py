@@ -490,17 +490,18 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
                 similarities[i:i + 512, :] = np.exp(-db)
         else:
 
+            means1, covs1 = np.expand_dims(means1, axis=1), np.expand_dims(covs1, axis=1)
+            means2, covs2 = np.expand_dims(means2, axis=0), np.expand_dims(covs2, axis=0)
+
             # Cross-Entropy loss with Bhattacharyya coefficient
             cov_avg = (covs1 + covs2) / 2
             mean_diff = means1 - means2
 
             # Calculate the Bhattacharyya distance
-            db = (0.125 * torch.sum(mean_diff * (1. / cov_avg) * mean_diff, dim=1) +
-                  0.5 * (torch.sum(torch.log(cov_avg), dim=1) - 0.5 * torch.sum(torch.log(covs1),
-                                                                                dim=1) - 0.5 * torch.sum(
-                        torch.log(covs2), dim=1)))
+            db = (0.125 * np.sum(mean_diff * (1. / cov_avg) * mean_diff, axis=-1) +
+                  0.5 * (np.sum(np.log(cov_avg), axis=-1) - 0.5 * np.sum(np.log(covs1), axis=-1) - 0.5 * np.sum(np.log(covs2), axis=-1)))
 
-            similarities = torch.exp(-db)
+            similarities = np.exp(-db)
 
     else:
         raise ValueError("Invalid metric!")

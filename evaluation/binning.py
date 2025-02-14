@@ -30,7 +30,7 @@ def main(args):
                 else:
                     raise ValueError(f"Metric was not chosen for the model {model_name}")
 
-                print(f"Model: {model_name} Species: {species} Sample ID: {sample} Metric: {metric}")
+                print(f"Model: {model_name} Species: {species} Sample ID: {sample} Metric: {metric} Scalable: {args.scalable}")
 
                 # Load the clustering data to compute similarity threshold
                 clustering_data_file_path = os.path.join(args.data_dir, species, f"clustering_0.tsv")
