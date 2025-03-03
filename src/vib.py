@@ -408,7 +408,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Define the model
-    model = NonLinearModel(
+    model = VIBModel(
         k=args.k, dim=args.dim, device=torch.device(args.device), verbose=True, seed=args.seed
     )
 
