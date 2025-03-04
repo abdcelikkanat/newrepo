@@ -288,14 +288,22 @@ def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
 
     elif name == "vib":
         # left_cov and right_cov are the standard deviations
-
         k = 8
-        epsilon = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]))
+        epsilon_i = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1])) # dim = (k, batch, d)
+        epsilon_j = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1])) # dim = (k, batch, d)
+        z_i = left_mean + left_cov*epsilon_i # dim = (k, batch, d)
+        z_j = right_mean + right_cov*epsilon_j # dim = (k, batch, d)
+        
+        distance = torch.sum((z_i - z_j)**2, dim=2) # dim = (k, batch)  
+        
+        # Get log probabilities
+        log_p_yij_ri_rj = torch.logsumexp(-distance, dim=0) - torch.log(torch.tensor(k, dtype=torch.float)) # dim = (batch)
+        
 
-        p = torch.mean(
-            torch.exp(-((left_mean - right_mean) + (left_cov - right_cov)*epsilon )**2),
-            keepdim=False
-        )
+        #p = torch.mean(
+        #    torch.exp(-((left_mean - right_mean) + (left_cov - right_cov)*epsilon_i )**2),
+        #    keepdim=False
+        #)
 
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
