@@ -305,12 +305,29 @@ def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
         #    keepdim=False
         #)
 
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
+        #Option A
+        #return torch.nn.functional.binary_cross_entropy(p_yij_ri_rj, labels, reduction='mean')
 
+        #Option B
+        #logits = torch.log(p_yij_ri_rj) - torch.log(1 - p_yij_ri_rj)
+        #return torch.nn.functional.binary_cross_entropy_from_logits(logits, labels, reduction='mean')
+
+        #Option C  where logits are computed log probablities in a numerically stable way
+        #p_yij_ri_rj = torch.exp(log_p_yij_ri_rj)
+        #logits = torch.log(p_yij_ri_rj) - torch.log(1 - p_yij_ri_rj)
+        logits = log_p_yij_ri_rj - log1mexp(-log_p_yij_ri_rj) 
+        return torch.nn.functional.binary_cross_entropy_from_logits(logits, labels, reduction='mean')
     else:
         raise ValueError(f"Unknown loss function name: {name}")
 
+def log1mexp(x):
+    """Compute `log(1 - exp(-x))` elementwise in a numerically stable way."""
+    log2 = torch.log(torch.tensor(2.0, dtype=x.dtype, device=x.device))
+    return torch.where(
+        x < log2, torch.log(-torch.expm1(-x)),
+        torch.log1p(-torch.exp(-x))
+    )
 
 def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern"):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
