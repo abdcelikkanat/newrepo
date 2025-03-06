@@ -75,8 +75,46 @@ def main(args):
 
                 # Filter sequences with length < 2500
                 filterd_idx = [i for i, seq in enumerate(dna_sequences) if len(seq) >= MIN_SEQ_LEN]
-                dna_sequences = [dna_sequences[i] for i in filterd_idx]
-                labels_bin = [labels_bin[i] for i in filterd_idx]
+                # dna_sequences = [dna_sequences[i] for i in filterd_idx]
+                # labels_bin = [labels_bin[i] for i in filterd_idx]
+
+                # # Filter sequences with low abundance labels (less than 10)
+                # label_counts = collections.Counter(labels_bin)
+                # filterd_idx = [i for i, l in enumerate(labels_bin) if label_counts[l] >= MIN_ABUNDANCE_VALUE]
+                # dna_sequences = [dna_sequences[i] for i in filterd_idx]
+                # labels_bin = [labels_bin[i] for i in filterd_idx]
+                #
+                # # Convert labels to numeric values
+                # label2id = {l: i for i, l in enumerate(set(labels_bin))}
+                # labels_bin = np.array([label2id[l] for l in labels_bin])
+                # num_clusters = len(label2id)
+                # print(f"Get {len(dna_sequences)} sequences, {num_clusters} clusters")
+
+                # Define the embedding file path. If the file exist, we don't recompute the dna embeddings
+                embedding_file_path = os.path.join(
+                    "temp_dna_embeddings", species, f"binning_{sample}{args.suffix}", f"{model_name}.npy"
+                )
+                # Generate embeddings for the binning set
+                features = get_embedding(
+                    dna_sequences=dna_sequences, model_name=model_name, species=species, sample=sample,
+                    k=args.k, test_model_dir=args.test_model_dir, embedding_file_path=embedding_file_path,
+                )
+                # -------------[ Hardcoded ]-------------
+                embs, covs = features
+                log_det = np.log(covs).sum(axis=1)
+                # Sort the log determinants in ascending order and get the indices
+                sorted_indices = np.argsort(log_det)
+                # Convert the numpy array to a list
+                sorted_indices = sorted_indices.tolist()
+
+                print(f"Number of sequences whose length is smaller than 2500: {len(filterd_idx)} out of {dna_sequences}")
+
+                embs = embs[np.asarray(sorted_indices[len(filterd_idx):])]
+                covs = covs[np.asarray(sorted_indices[len(filterd_idx):])]
+                features = (embs, covs)
+
+                dna_sequences = [dna_sequences[i] for i in sorted_indices[len(filterd_idx):]]
+                labels_bin = [labels_bin[i] for i in sorted_indices[len(filterd_idx):]]
 
                 # Filter sequences with low abundance labels (less than 10)
                 label_counts = collections.Counter(labels_bin)
@@ -90,15 +128,7 @@ def main(args):
                 num_clusters = len(label2id)
                 print(f"Get {len(dna_sequences)} sequences, {num_clusters} clusters")
 
-                # Define the embedding file path. If the file exist, we don't recompute the dna embeddings
-                embedding_file_path = os.path.join(
-                    "temp_dna_embeddings", species, f"binning_{sample}{args.suffix}", f"{model_name}.npy"
-                )
-                # Generate embeddings for the binning set
-                features = get_embedding(
-                    dna_sequences=dna_sequences, model_name=model_name, species=species, sample=sample,
-                    k=args.k, test_model_dir=args.test_model_dir, embedding_file_path=embedding_file_path,
-                )
+                # -------------[ Hardcoded ]-------------
 
                 # Run the k-medoid algorithm
                 binning_results = KMedoid(
