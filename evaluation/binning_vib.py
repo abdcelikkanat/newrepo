@@ -107,10 +107,10 @@ def main(args):
                 # Convert the numpy array to a list
                 sorted_indices = sorted_indices.tolist()
 
-                print(f"Number of sequences whose length is smaller than 2500: {len(filterd_idx)} out of {dna_sequences}")
+                print(f"Number of sequences whose length is smaller than 2500: {len(filterd_idx)} out of {len(dna_sequences)}")
 
-                embs = embs[np.asarray(sorted_indices[len(filterd_idx):])]
-                covs = covs[np.asarray(sorted_indices[len(filterd_idx):])]
+                embs = embs[np.asarray(sorted_indices[len(filterd_idx):], dtype=int)]
+                covs = covs[np.asarray(sorted_indices[len(filterd_idx):], dtype=int)]
                 features = (embs, covs)
 
                 dna_sequences = [dna_sequences[i] for i in sorted_indices[len(filterd_idx):]]
