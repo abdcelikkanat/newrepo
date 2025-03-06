@@ -108,13 +108,15 @@ def main(args):
                 sorted_indices = sorted_indices.tolist()
 
                 print(f"Number of sequences whose length is smaller than 2500: {len(filterd_idx)} out of {len(dna_sequences)}")
+                num_of_removed_sequences = max(int(len(dna_sequences)/20), len(dna_sequences)-len(filterd_idx))
+                print(f"Number of sequences to be removed: {num_of_removed_sequences}")
 
-                embs = embs[np.asarray(sorted_indices[len(filterd_idx):], dtype=int)]
-                covs = covs[np.asarray(sorted_indices[len(filterd_idx):], dtype=int)]
+                embs = embs[np.asarray(sorted_indices[num_of_removed_sequences:], dtype=int)]
+                covs = covs[np.asarray(sorted_indices[num_of_removed_sequences:], dtype=int)]
                 features = (embs, covs)
 
-                dna_sequences = [dna_sequences[i] for i in sorted_indices[len(filterd_idx):]]
-                labels_bin = [labels_bin[i] for i in sorted_indices[len(filterd_idx):]]
+                dna_sequences = [dna_sequences[i] for i in sorted_indices[num_of_removed_sequences:]]
+                labels_bin = [labels_bin[i] for i in sorted_indices[num_of_removed_sequences:]]
 
                 # Filter sequences with low abundance labels (less than 10)
                 label_counts = collections.Counter(labels_bin)
