@@ -101,6 +101,7 @@ def main(args):
                 )
                 # -------------[ Hardcoded ]-------------
                 embs, covs = features
+                print("Shapes1:", embs.shape, covs.shape)
                 log_det = np.log(covs).sum(axis=1)
                 # Sort the log determinants in ascending order and get the indices
                 sorted_indices = np.argsort(log_det)
@@ -113,7 +114,9 @@ def main(args):
 
                 embs = embs[np.asarray(sorted_indices[num_of_removed_sequences:], dtype=int)]
                 covs = covs[np.asarray(sorted_indices[num_of_removed_sequences:], dtype=int)]
-                features = (embs, covs)
+
+                print("Shapes2:", embs.shape, covs.shape)
+
 
                 dna_sequences = [dna_sequences[i] for i in sorted_indices[num_of_removed_sequences:]]
                 labels_bin = [labels_bin[i] for i in sorted_indices[num_of_removed_sequences:]]
@@ -123,6 +126,9 @@ def main(args):
                 filterd_idx = [i for i, l in enumerate(labels_bin) if label_counts[l] >= MIN_ABUNDANCE_VALUE]
                 dna_sequences = [dna_sequences[i] for i in filterd_idx]
                 labels_bin = [labels_bin[i] for i in filterd_idx]
+                embs = embs[np.asarray(filterd_idx, dtype=int)]
+                covs = covs[np.asarray(filterd_idx, dtype=int)]
+                features = (embs, covs)
 
                 # Convert labels to numeric values
                 label2id = {l: i for i, l in enumerate(set(labels_bin))}
