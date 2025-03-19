@@ -10,19 +10,17 @@ import os
 from scipy.spatial import distance
 import itertools
 from sklearn.preprocessing import normalize
-from src.poisson_model import PoissonModel
-from src.nonlinear import NonLinearModel
+from src.vib import VIBModel
 from scipy.optimize import linear_sum_assignment
 
 # # Here, we define the batch sizes for inference. It might be important for the memory requirements of the model.
 # MODEL2BATCH_SIZE = {
 #     "tnf": 100, "tnf_k": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
-#     "kmerprofile": -1, "poisson": -1, "nonlinear": -1, "kum": -1,
 # }
 
 
 def get_embedding(
-        dna_sequences, model_name, species, sample, k=4, test_model_dir=None, embedding_file_path = None,
+        dna_sequences, model_name, species, sample, k=4, model_path=None, embedding_file_path = None,
 ):
     """
     Get the embeddings (and covariances dependindg on method) of the DNA sequences using the specified model.
@@ -87,7 +85,7 @@ def get_embedding(
 
             embedding = calculate_llm_embedding(
                 dna_sequences,
-                model_name_or_path=test_model_dir,
+                model_name_or_path=model_path,
                 model_max_length=5000,
                 batch_size=batch_size
             )
@@ -99,31 +97,15 @@ def get_embedding(
             embedding = calculate_tnf(dna_sequences, k=k)
             output = normalize(embedding, norm=norm)
 
-        elif model_name == "poisson":
+        elif model_name == "vib":
 
-            kwargs, model_state_dict = torch.load(test_model_dir, map_location=torch.device("cpu"))
+            kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
             kwargs['device'] = "cpu"
-            pm = PoissonModel(**kwargs)
-            pm.load_state_dict(model_state_dict)
-            output = pm.read2emb(dna_sequences)
-
-        elif model_name == "nonlinear":
-
-            kwargs, model_state_dict = torch.load(test_model_dir, map_location=torch.device("cpu"))
-            kwargs['device'] = "cpu"
-            nlm = NonLinearModel(**kwargs)
-            nlm.load_state_dict(model_state_dict)
-            output = nlm.read2emb(dna_sequences)
-
-        elif model_name == "kum":
-
-            kwargs, model_state_dict = torch.load(test_model_dir, map_location=torch.device("cpu"))
-            kwargs['device'] = "cpu"
-            nlm = NonLinearModel(**kwargs)
-            nlm.load_state_dict(model_state_dict)
-            embedding, covs = nlm.read2emb(dna_sequences)
+            vib = VIBModel(**kwargs)
+            vib.load_state_dict(model_state_dict)
+            embedding, stds = vib.read2emb(dna_sequences)
             # Note that the output is a tuple of embedding and covariances
-            output = (embedding, covs)
+            output = (embedding, stds)
 
         else:
             raise ValueError(f"Unknown model {model_name}")
@@ -143,10 +125,10 @@ def compute_class_center_medium_similarity(features, labels, metric="dot"):
     idx = np.argsort(labels)
     labels = labels[idx]
     if type(features) == tuple:
-        embeddings, covs = features
-        embeddings, covs = embeddings[idx], covs[idx]
+        embeddings, covs = features[0][idx], features[1][idx]
     else:
         embeddings = features[idx]
+        covs = None
 
     # Get the counts of samples per class, i.e. the number of samples per class
     n_sample_per_class = np.bincount(labels)
@@ -168,7 +150,7 @@ def compute_class_center_medium_similarity(features, labels, metric="dot"):
         features2 = embeddings[start:end]
 
         # If covariances are provided, we also need to get the mean of the covariances
-        if metric != "l1" or metric != "l2" or metric != "euclidean":
+        if covs is not None:
             features1 = (features1, np.mean(covs[start:end], axis=0, keepdims=True))
             features2 = (features2, covs[start:end])
 
@@ -417,91 +399,33 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
 
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=1))
 
-    elif metric == "symmetric_kl":
+    elif metric == "vib":
 
-        if type(features1) != tuple:
-            raise ValueError("For the symmetric_kl metric, we need covariance entries!")
-
-        means1, covs1 = features1
-        means2, covs2 = features2
-
-        kl_symmetric = kl_div_cdist(means1, covs1, means2, covs2) + kl_div_cdist(means2, covs2, means1, covs1).T
-        similarities = np.exp(-kl_symmetric)
-
-    elif metric == "bern-mls":
-
-        """
-        In the implementation, similarities are defined as exp(-dist).
-        """
-
-        raise ValueError("Check the implementation!")
-
-        if type(features1) != tuple:
-            raise ValueError("For the bern-mls metric, we need covariance entries!")
-
-        means1, covs1 = features1
-        means2, covs2 = features2
-
-        similarities = np.exp(- 0.5 * np.sum(
-            (means1 - means2) ** 2 / (covs1 + covs2) + torch.log(covs1 + covs2), axis=1
-        ) )
-
-    elif metric == "wasserstein":
-        """
-        In the implementation, similarities are defined as exp(-dist).
-        """
-
-        raise ValueError("Check the implementation!")
-
-        if type(features1) != tuple:
-            raise ValueError("For the wasserstein metric, we need covariance entries!")
-
-        means1, covs1 = features1
-        means2, covs2 = features2
-
-        similarities = np.exp(-(
-                np.sum((means1 - means2) ** 2, axis=1) + np.sum(covs1 + covs2 - 2 * (covs1 * covs2) ** 0.5, axis=1)
-        ))
-
-    elif metric == "bern_bhattacharyya" or "bern_bc":
-
-        if type(features1) != tuple:
-            raise ValueError("For the bhattacharyya metric, we need covariance entries!")
-
-        means1, covs1 = features1
-        means2, covs2 = features2
+        k = 8
+        means_left, stds_left, means_right, stds_right = features1, features2
 
         if scalable:
-            similarities = np.zeros((means1.shape[0], means2.shape[0]))
 
-            means1, covs1 = np.expand_dims(means1, axis=1), np.expand_dims(covs1, axis=1)
-            means2, covs2 = np.expand_dims(means2, axis=0), np.expand_dims(covs2, axis=0)
+            similarities = np.zeros((means_left.shape[0], means_right.shape[0]))
+            for i in range(0, means_left.shape[0], 512):
+                eps_left = np.random.randn(k, min(i + 512, means_left.shape[0]) - i, means_left.shape[1])
+                eps_right = np.random.randn(k, means_right.shape[0], means_right.shape[1])
+                similarities[i:i + 512, :] = np.mean(np.exp(
+                    -distance.cdist(
+                        means_left[i:i + 512, :] + stds_left[i:i + 512, :]*eps_left,
+                        means_right + stds_right*eps_right,
+                        'minkowski', p=2)
+                ), axis=0)
 
-            for i in range(0, means1.shape[0], 512):
-
-                # Cross-Entropy loss with Bhattacharyya coefficient
-                cov_avg = (covs1[i:i + 512] + covs2) / 2
-                mean_diff = means1[i:i + 512] - means2
-
-                # Calculate the Bhattacharyya distance
-                db = (0.125 * np.sum(mean_diff * (1. / cov_avg) * mean_diff, axis=-1) +
-                      0.5 * (np.sum(np.log(cov_avg), axis=-1) - 0.5 * np.sum(np.log(covs1[i:i + 512]), axis=-1) - 0.5 * np.sum(np.log(covs2), axis=-1)))
-
-                similarities[i:i + 512, :] = np.exp(-db)
         else:
 
-            means1, covs1 = np.expand_dims(means1, axis=1), np.expand_dims(covs1, axis=1)
-            means2, covs2 = np.expand_dims(means2, axis=0), np.expand_dims(covs2, axis=0)
+            eps_left = np.random.randn(k, means_left.shape[0], means_right.shape[1])
+            eps_right = np.random.randn(k, means_right.shape[0], means_right.shape[1])
 
-            # Cross-Entropy loss with Bhattacharyya coefficient
-            cov_avg = (covs1 + covs2) / 2
-            mean_diff = means1 - means2
+            similarities = np.mean(np.exp(
+                -distance.cdist(means_left + stds_left*eps_left, means_right + stds_right*eps_right, 'minkowski', p=2)
+            ), axis=0)
 
-            # Calculate the Bhattacharyya distance
-            db = (0.125 * np.sum(mean_diff * (1. / cov_avg) * mean_diff, axis=-1) +
-                  0.5 * (np.sum(np.log(cov_avg), axis=-1) - 0.5 * np.sum(np.log(covs1), axis=-1) - 0.5 * np.sum(np.log(covs2), axis=-1)))
-
-            similarities = np.exp(-db)
 
     else:
         raise ValueError("Invalid metric!")

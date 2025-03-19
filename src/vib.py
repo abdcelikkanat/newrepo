@@ -126,11 +126,11 @@ class VIBModel(torch.nn.Module):
         self.dropout1_mean = torch.nn.Dropout(0.2)
         self.linear2_mean = torch.nn.Linear(512, self.__dim, dtype=torch.float, device=self.__device)
 
-        self.linear1_cov = torch.nn.Linear(self.__kmers_num, 512, dtype=torch.float, device=self.__device)
-        self.batch1_cov = torch.nn.BatchNorm1d(512, dtype=torch.float, device=self.__device)
-        self.activation1_cov = torch.nn.Sigmoid()
-        self.dropout1_cov = torch.nn.Dropout(0.2)
-        self.linear2_cov = torch.nn.Linear(512, self.__dim, dtype=torch.float, device=self.__device)
+        self.linear1_std = torch.nn.Linear(self.__kmers_num, 512, dtype=torch.float, device=self.__device)
+        self.batch1_std = torch.nn.BatchNorm1d(512, dtype=torch.float, device=self.__device)
+        self.activation1_std = torch.nn.Sigmoid()
+        self.dropout1_std = torch.nn.Dropout(0.2)
+        self.linear2_std = torch.nn.Linear(512, self.__dim, dtype=torch.float, device=self.__device)
 
         self.bce_loss = torch.nn.BCELoss()
 
@@ -142,20 +142,20 @@ class VIBModel(torch.nn.Module):
         mean = self.dropout1_mean(mean)
         mean = self.linear2_mean(mean)
 
-        cov = self.linear1_mean(kmer_profile)
-        cov = self.batch1_mean(cov)
-        cov = self.activation1_mean(cov)
-        cov = self.dropout1_mean(cov)
-        cov = self.linear2_mean(cov)
-        cov = torch.nn.functional.softplus(cov) + 1e-6
+        std = self.linear1_mean(kmer_profile)
+        std = self.batch1_mean(std)
+        std = self.activation1_mean(std)
+        std = self.dropout1_mean(std)
+        std = self.linear2_mean(std)
+        std = torch.nn.functional.softplus(std) + 1e-6
 
-        return mean, cov
+        return mean, std
 
     def forward(self, left_kmer_profile, right_kmer_profile):
-        left_mean, left_cov = self.encoder(left_kmer_profile)
-        right_mean, right_cov = self.encoder(right_kmer_profile)
+        left_mean, left_std = self.encoder(left_kmer_profile)
+        right_mean, right_std = self.encoder(right_kmer_profile)
 
-        return left_mean, left_cov, right_mean, right_cov
+        return left_mean, left_std, right_mean, right_std
 
     def get_k(self):
         return self.__k
@@ -186,148 +186,56 @@ class VIBModel(torch.nn.Module):
                 kmer_profiles.append(self.read2kmer_profile(read, normalized=normalized))
 
             kmer_profiles = torch.from_numpy(np.asarray(kmer_profiles)).to(torch.float)
-            means, covs = self.encoder(kmer_profiles)
+            means, stds = self.encoder(kmer_profiles)
             means = means.detach().numpy()
-            covs = covs.detach().numpy()
+            stds = stds.detach().numpy()
 
-        return means, covs
+        return means, stds
 
-def loss_func(left_mean, left_cov, right_mean, right_cov, labels, name="bern"):
+def loss_func(left_mean, left_std, right_mean, right_std, labels, name="bern"):
 
-    def compute_kl_div(mean1, cov1, mean2, cov2):
+    # Helper functions
+    def log1mexp(p):
         """
-        Compute the KL divergence between two Gaussian distributions with diagonal covariance matrices
-        0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
+        Compute `log(1 - exp(-x))` elementwise in a numerically stable way.
         """
-
-        mean_dif = mean2 - mean1
-        cov2_inv = 1. / cov2
-
-        return 0.5 * (
-                (torch.log(cov2).sum(dim=1) - torch.log(cov1).sum(dim=1)) - mean1.shape[1]  +
-                (cov2_inv*cov1).sum(dim=1) + (mean_dif * cov2_inv * mean_dif).sum(dim=1)
+        log2 = torch.log(torch.tensor(2.0, dtype=p.dtype, device=p.device))
+        return torch.where(
+            p < log2, torch.log(-torch.expm1(-p)), torch.log1p(-torch.exp(-p))
         )
 
-    if name == "kl":
+    if name == "vib-nonstable":
 
-        return ( (2*labels - 1) * compute_kl_div(left_mean, left_cov, right_mean, right_cov) ).mean()
+        k = 8
+        epsilon = (2**0.5)*torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]))
 
-    elif name == "symmetric_kl":
-
-        return ( (2*labels - 1) * (
-                compute_kl_div(left_mean, left_cov, right_mean, right_cov) +
-                compute_kl_div(right_mean, right_cov, left_mean, left_cov)
-        ) ).mean()
-
-    elif name == "bern_symmetric_kl":
-
-        p = torch.exp(
-            - compute_kl_div(left_mean, left_cov, right_mean, right_cov) - compute_kl_div(right_mean, right_cov, left_mean, left_cov)
+        p = torch.mean(
+           torch.exp(-((left_mean - right_mean) + (left_std - right_std)*epsilon )**2),
+           keepdim=False
         )
-
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
-
-    elif name == "mls":
-        """
-        Implementation of the metric given in the paper "Probabilistic face embeddings." by Yichun Shi, Anil K. Jain
-        """
-
-        return ( (2*labels - 1) * 0.5 * torch.sum(
-            (left_mean - right_mean) ** 2 / (left_cov + right_cov) + torch.log(left_cov + right_cov), dim=1
-        ) ).mean()
-
-    elif name == "bern_sigmoid_mls":
-
-        return torch.nn.functional.binary_cross_entropy_with_logits(-0.5 * torch.sum(
-            (left_mean - right_mean) ** 2 / (left_cov + right_cov) + torch.log(left_cov + right_cov), dim=1
-        ), labels, reduction='mean' )
-
-    elif name == "wasserstein":
-
-        return ( (2*labels - 1) * (
-            torch.sum((left_mean - right_mean)**2, dim=1) + torch.sum(left_cov + right_cov - 2*(left_cov*right_cov)**0.5, dim=1)
-        )).mean()
-
-    elif name == "bern_wasserstein":
-
-        p = torch.exp(
-            -(torch.norm(left_mean - right_mean, p=2, dim=1)**2 + torch.sum(left_cov + right_cov - 2*(left_cov*right_cov)**0.5, dim=1))
-        )
-
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
-
-    elif name == "bern_bhattacharyya" or "bern_bc":
-        """
-        Implementation of the Bhattacharyya distance (D_b) which is negative log of Bhattacharyya coefficient (BC)
-        : https://en.wikipedia.org/wiki/Bhattacharyya_distance
-        
-        # Thomas' impementation
-        # Calculate the Bhattacharyya coefficient
-        log_det_cov = torch.sum(torch.log(cov), dim=1)
-        log_det_left_cov = torch.sum(torch.log(left_cov), dim=1)
-        log_det_right_cov = torch.sum(torch.log(right_cov), dim=1)
-        log_term = (log_det_cov - 0.5 * (log_det_left_cov + log_det_right_cov))
-        #        Dp = 1/8 * torch.sum((left_mean - right_mean) * 1./cov * (left_mean - right_mean), dim=1) + 0.5 * torch.log(torch.prod(cov, dim=1)/(torch.sqrt(torch.prod(left_cov, dim=1)*torch.prod(right_cov, dim=1))))
-        Dp = 1 / 8 * torch.sum((left_mean - right_mean) * 1. / cov * (left_mean - right_mean), dim=1) + 0.5 * log_term
-        a = (labels * -Dp)
-        b = (1 - labels) * torch.log(torch.clamp(1 - torch.exp(-Dp), min=1e-6))
-        return -(a + b).mean()
-        """
-
-        # Cross-Entropy loss with Bhattacharyya coefficient
-        cov_avg = (left_cov + right_cov) / 2
-        mean_diff = left_mean - right_mean
-
-        # Calculate the Bhattacharyya distance
-        db = (0.125 * torch.sum(mean_diff * (1./cov_avg) * mean_diff, dim=1) +
-              0.5 * (torch.sum(torch.log(cov_avg), dim=1) - 0.5*torch.sum(torch.log(left_cov), dim=1) - 0.5*torch.sum(torch.log(right_cov), dim=1)))
-
-        p = torch.exp(-db)
 
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
     elif name == "vib":
-        # left_cov and right_cov are the standard deviations
+
         k = 8
-        epsilon_i = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1])) # dim = (k, batch, d)
-        epsilon_j = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1])) # dim = (k, batch, d)
-        z_i = left_mean + left_cov*epsilon_i # dim = (k, batch, d)
-        z_j = right_mean + right_cov*epsilon_j # dim = (k, batch, d)
+        epsilon_i = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]))  # dim = (k, batch, d)
+        epsilon_j = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]))  # dim = (k, batch, d)
+        z_i = left_mean + left_std*epsilon_i  # shape (k, batch, d)
+        z_j = right_mean + right_std*epsilon_j  # shape (k, batch, d)
         
-        distance = torch.sum((z_i - z_j)**2, dim=2) # dim = (k, batch)  
+        distance = torch.sum((z_i - z_j)**2, dim=2)  # shape (k, batch)
         
-        # Get log probabilities
-        log_p_yij_ri_rj = torch.logsumexp(-distance, dim=0) - torch.log(torch.tensor(k, dtype=torch.float)) # dim = (batch)
-        
+        # Get log probabilities, \sum_k exp(-dist) / K (In fact, we don't need the normalization)
+        log_p_yij_ri_rj = torch.logsumexp(-distance, dim=0) - torch.log(torch.tensor(k, dtype=torch.float))
 
-        #p = torch.mean(
-        #    torch.exp(-((left_mean - right_mean) + (left_cov - right_cov)*epsilon_i )**2),
-        #    keepdim=False
-        #)
+        # Define logits, log(p / (1-p))
+        logits = log_p_yij_ri_rj - log1mexp(-log_p_yij_ri_rj)
 
-
-        #Option A
-        #return torch.nn.functional.binary_cross_entropy(p_yij_ri_rj, labels, reduction='mean')
-
-        #Option B
-        #logits = torch.log(p_yij_ri_rj) - torch.log(1 - p_yij_ri_rj)
-        #return torch.nn.functional.binary_cross_entropy_from_logits(logits, labels, reduction='mean')
-
-        #Option C  where logits are computed log probablities in a numerically stable way
-        #p_yij_ri_rj = torch.exp(log_p_yij_ri_rj)
-        #logits = torch.log(p_yij_ri_rj) - torch.log(1 - p_yij_ri_rj)
-        logits = log_p_yij_ri_rj - log1mexp(-log_p_yij_ri_rj) 
         return torch.nn.functional.binary_cross_entropy_from_logits(logits, labels, reduction='mean')
     else:
         raise ValueError(f"Unknown loss function name: {name}")
 
-def log1mexp(x):
-    """Compute `log(1 - exp(-x))` elementwise in a numerically stable way."""
-    log2 = torch.log(torch.tensor(2.0, dtype=x.dtype, device=x.device))
-    return torch.where(
-        x < log2, torch.log(-torch.expm1(-x)),
-        torch.log1p(-torch.exp(-x))
-    )
 
 def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern"):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -343,10 +251,10 @@ def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern")
         labels = labels.reshape(-1).to(device)
 
         # Make predictions for the current epoch
-        left_mean, left_cov, right_mean, right_cov = model(left_kmer_profile, right_kmer_profile)
+        left_mean, left_std, right_mean, right_std = model(left_kmer_profile, right_kmer_profile)
 
         # Compute the loss and backpropagate
-        batch_loss = loss_func(left_mean, left_cov, right_mean, right_cov, labels, name=loss_name)
+        batch_loss = loss_func(left_mean, left_std, right_mean, right_std, labels, name=loss_name)
         batch_loss.backward()
 
         # Update the model parameters

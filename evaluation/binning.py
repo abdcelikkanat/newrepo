@@ -24,14 +24,16 @@ def main(args):
         for species in args.species.split(","):
             for sample in map(int, args.samples.split(",")):
 
-                # Define the appropriate metric for the given method
-                if args.metric != None:
-                    metric = args.metric
-                else:
+                # Define the metric for the given method
+                metric = args.metric
+                if metric == None:
                     raise ValueError(f"Metric was not chosen for the model {model_name}")
 
                 print(f"Model: {model_name} Species: {species} Sample ID: {sample} Metric: {metric} Scalable: {args.scalable}")
 
+                ########################################################################################################
+                # =================== Compute the threshold value required for the k-Medoid algorithm ==================
+                ########################################################################################################
                 # Load the clustering data to compute similarity threshold
                 clustering_data_file_path = os.path.join(args.data_dir, species, f"clustering_0.tsv")
                 with open(clustering_data_file_path, "r") as f:
@@ -49,13 +51,14 @@ def main(args):
                 print(f"Clustering data contains {len(dna_sequences)} sequences with {num_clusters} clusters.")
 
                 # Define the embedding file path. If the file exist, we don't need to recompute the dna embeddings
-                embedding_file_path = os.path.join(
+                cluster_embs_file_path = os.path.join(
                     "temp_dna_embeddings", species, f"clustering_{sample}{args.suffix}", f"{model_name}.npy"
-                )
+                ) if args.cluster_emb_file == "" else args.cluster_emb_file
+
                 # Get embeddings (and covariances) of the sequences in the dataset named clustering
                 features = get_embedding(
                     dna_sequences=dna_sequences, model_name=model_name, species=species, sample=0,
-                    k=args.k, test_model_dir=args.test_model_dir, embedding_file_path=embedding_file_path,
+                    k=args.k, model_path=args.model_path, embedding_file_path=cluster_embs_file_path,
                 )
 
                 # We need to compute the similarity threshold that is required for the k-medoid algorithm
@@ -63,6 +66,9 @@ def main(args):
                 threshold = percentile_values[-3]
                 print(f"Threshold value: {threshold}")
 
+                ########################################################################################################
+                # ========================================= Evaluate the model =========================================
+                ########################################################################################################
                 # Load binning data
                 data_file = os.path.join(args.data_dir, species, f"binning_{sample}.tsv")
 
@@ -70,6 +76,7 @@ def main(args):
                     reader = csv.reader(f, delimiter="\t")
                     data = list(reader)[1:]
 
+                # Get the dna sequences nd labels, and shorten the sequences whose length is longer than 'MAX_SEQ_LEN'
                 dna_sequences = [d[0][:MAX_SEQ_LEN] for d in data]
                 labels_bin = [d[1] for d in data]
 
@@ -97,15 +104,13 @@ def main(args):
                 # Generate embeddings for the binning set
                 features = get_embedding(
                     dna_sequences=dna_sequences, model_name=model_name, species=species, sample=sample,
-                    k=args.k, test_model_dir=args.test_model_dir, embedding_file_path=embedding_file_path,
+                    k=args.k, model_path=args.model_path, embedding_file_path=embedding_file_path,
                 )
-
                 # Run the k-medoid algorithm
                 binning_results = KMedoid(
                     features, min_similarity=threshold, min_bin_size=10,
                     max_iter=1000, metric=metric, scalable=args.scalable
                 )
-
                 # Get the number of true labels and predictied labels
                 true_labels_bin = labels_bin[binning_results != -1]
                 predicted_labels = binning_results[binning_results != -1]
@@ -156,12 +161,16 @@ if __name__ == "__main__":
         help='Output file path'
     )
     parser.add_argument(
-        '--test_model_dir', type=str, default="/root/trained_model",
+        '--model_path', type=str, default="",
         help='Directory to save trained models to test'
     )
     parser.add_argument(
+        '--cluster_emb_file', type=str, default="",
+        help='File path to store the embeddings of the cluster file used to detect an optimal threshold value'
+    )
+    parser.add_argument(
         '--model_list', type=str, default="dnaberts",
-        help='List of models to evaluate, separated by comma. Currently support [tnf, tnf-k, dnabert2, hyenadna, nt, dnarberts, kmerprofile, poisson, nonlinear, kum]'
+        help='List of models to evaluate, separated by comma. Currently support [tnf, tnf-k, dnabert2, hyenadna, nt, dnaberts, kmerprofile, vib]'
     )
     parser.add_argument('--data_dir', type=str, default=None, help='Data directory')
     parser.add_argument(
