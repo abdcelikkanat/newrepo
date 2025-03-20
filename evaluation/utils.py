@@ -119,16 +119,15 @@ def get_embedding(
 
     return output
 
-def compute_class_center_medium_similarity(features, labels, metric="dot"):
+def compute_class_center_medium_similarity(features, labels, metric="dot", scalable=False):
 
     # Sort the embeddings (and covariances if exists) by labels
     idx = np.argsort(labels)
     labels = labels[idx]
-    if type(features) == tuple:
+    if type(features) is tuple:
         embeddings, covs = features[0][idx], features[1][idx]
     else:
-        embeddings = features[idx]
-        covs = None
+        embeddings, covs = features[idx], None
 
     # Get the counts of samples per class, i.e. the number of samples per class
     n_sample_per_class = np.bincount(labels)
@@ -155,7 +154,7 @@ def compute_class_center_medium_similarity(features, labels, metric="dot"):
             features2 = (features2, covs[start:end])
 
         # Compute the similarity matrix between the two sets of features
-        similarities = compute_similarity_matrix(features1=features1, features2=features2, metric=metric).reshape(-1)
+        similarities = compute_similarity_matrix(features1=features1, features2=features2, metric=metric, scalable=scalable).reshape(-1)
 
         # Store the similarities in the all_similarities array
         all_similarities[start:end] = similarities
@@ -179,7 +178,7 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
     # Set the values below min_similarity to 0
     similarities[similarities < min_similarity] = 0
 
-    p = -np.ones(len(features[0]), dtype=int) if type(features) == tuple else -np.ones(len(features), dtype=int)
+    p = -np.ones(len(features[0]), dtype=int) if type(features) is tuple else -np.ones(len(features), dtype=int)
     row_sum = np.sum(similarities, axis=1)
 
     iter_count = 1
@@ -191,17 +190,17 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
         # Select the seed index, i.e. medoid index (Line 4)
         s = np.argmax(row_sum)
         # Initialize the current medoid (Line 4)
-        current_medoid = (features[0][s], features[1][s]) if type(features) == tuple else features[s]
+        current_medoid = (features[0][s], features[1][s]) if type(features) is tuple else features[s]
         selected_idx = None
         # Optimize the current medoid (Line 5-8)
         for t in range(3):
             # For the current medoid, find its similarities
-            if type(features) == tuple:
+            if type(features) is tuple:
                 features2 = (np.expand_dims(current_medoid[0], axis=0), np.expand_dims(current_medoid[1], axis=0))
             else:
                 features2 = np.expand_dims(current_medoid, axis=0)
             similarity = compute_similarity_matrix(
-                features1=features, features2=features2, metric=metric
+                features1=features, features2=features2, metric=metric, scalable=scalable
             ).squeeze()
 
             # Determine the indices that are within the similarity threshold
@@ -211,7 +210,7 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
             # Get the indices that are both within the similarity threshold and available
             selected_idx = np.where(np.logical_and(idx_within, idx_available))[0]
             # Determine the new k-medoid
-            if type(features) == tuple:
+            if type(features) is tuple:
                 current_medoid = (np.mean(features[0][selected_idx], axis=0), np.mean(features[1][selected_idx], axis=0))
             else:
                 current_medoid = np.mean(features[selected_idx], axis=0)
@@ -375,7 +374,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
 
     if metric == "dot":
 
-        if type(features1) == tuple:
+        if type(features1) is tuple:
             features1, features2 = features1[0], features2[0]
 
         if scalable:
@@ -387,14 +386,14 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
 
     elif metric == "euclidean" or metric == "l2":
 
-        if type(features1) == tuple:
+        if type(features1) is tuple:
             features1, features2 = features1[0], features2[0]
 
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.))
 
     elif metric == "l1":
 
-        if type(features1) == tuple:
+        if type(features1) is tuple:
             features1, features2 = features1[0], features2[0]
 
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=1))
@@ -402,7 +401,8 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
     elif metric == "vib":
 
         k = 8
-        means_left, stds_left, means_right, stds_right = features1, features2
+        means_left, stds_left = features1
+        means_right, stds_right = features2
 
         if scalable:
 
@@ -411,10 +411,10 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
                 eps_left = np.random.randn(k, min(i + 512, means_left.shape[0]) - i, means_left.shape[1])
                 eps_right = np.random.randn(k, means_right.shape[0], means_right.shape[1])
                 similarities[i:i + 512, :] = np.mean(np.exp(
-                    -distance.cdist(
-                        means_left[i:i + 512, :] + stds_left[i:i + 512, :]*eps_left,
-                        means_right + stds_right*eps_right,
-                        'minkowski', p=2)
+                    -torch.cdist(
+                        torch.from_numpy(means_left[i:i + 512, :] + stds_left[i:i + 512, :]*eps_left),
+                        torch.from_numpy(means_right + stds_right*eps_right)
+                     ).numpy()**2
                 ), axis=0)
 
         else:
@@ -423,7 +423,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
             eps_right = np.random.randn(k, means_right.shape[0], means_right.shape[1])
 
             similarities = np.mean(np.exp(
-                -distance.cdist(means_left + stds_left*eps_left, means_right + stds_right*eps_right, 'minkowski', p=2)
+                -torch.cdist(torch.from_numpy(means_left + stds_left*eps_left), torch.from_numpy(means_right + stds_right*eps_right)).numpy()**2
             ), axis=0)
 
 

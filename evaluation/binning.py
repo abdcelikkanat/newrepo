@@ -62,7 +62,7 @@ def main(args):
                 )
 
                 # We need to compute the similarity threshold that is required for the k-medoid algorithm
-                percentile_values = compute_class_center_medium_similarity(features, labels, metric=metric)
+                percentile_values = compute_class_center_medium_similarity(features, labels, metric=metric, scalable=True)
                 threshold = percentile_values[-3]
                 print(f"Threshold value: {threshold}")
 

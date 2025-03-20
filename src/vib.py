@@ -207,7 +207,7 @@ def loss_func(left_mean, left_std, right_mean, right_std, labels, name="bern"):
     if name == "vib-nonstable":
 
         k = 8
-        epsilon = (2**0.5)*torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]))
+        epsilon = (2**0.5)*torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
 
         p = torch.mean(
            torch.exp(-((left_mean - right_mean) + (left_std - right_std)*epsilon )**2),
@@ -219,8 +219,8 @@ def loss_func(left_mean, left_std, right_mean, right_std, labels, name="bern"):
     elif name == "vib":
 
         k = 8
-        epsilon_i = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]))  # dim = (k, batch, d)
-        epsilon_j = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]))  # dim = (k, batch, d)
+        epsilon_i = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)  # dim = (k, batch, d)
+        epsilon_j = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)  # dim = (k, batch, d)
         z_i = left_mean + left_std*epsilon_i  # shape (k, batch, d)
         z_j = right_mean + right_std*epsilon_j  # shape (k, batch, d)
         
@@ -232,7 +232,7 @@ def loss_func(left_mean, left_std, right_mean, right_std, labels, name="bern"):
         # Define logits, log(p / (1-p))
         logits = log_p_yij_ri_rj - log1mexp(-log_p_yij_ri_rj)
 
-        return torch.nn.functional.binary_cross_entropy_from_logits(logits, labels, reduction='mean')
+        return torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='mean')
     else:
         raise ValueError(f"Unknown loss function name: {name}")
 
