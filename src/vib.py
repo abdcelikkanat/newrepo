@@ -1,3 +1,5 @@
+from xml.etree.ElementInclude import include
+
 import torch
 import math
 import time
@@ -132,15 +134,17 @@ class VIBModel(torch.nn.Module):
         self.dropout1_std = torch.nn.Dropout(0.2)
         self.linear2_std = torch.nn.Linear(512, self.__dim, dtype=torch.float, device=self.__device)
 
-        self.bce_loss = torch.nn.BCELoss()
-
-    def encoder(self, kmer_profile):
+    def mean_encoder(self, kmer_profile):
 
         mean = self.linear1_mean(kmer_profile)
         mean = self.batch1_mean(mean)
         mean = self.activation1_mean(mean)
         mean = self.dropout1_mean(mean)
         mean = self.linear2_mean(mean)
+
+        return mean
+
+    def std_encoder(self, kmer_profile):
 
         std = self.linear1_mean(kmer_profile)
         std = self.batch1_mean(std)
@@ -149,11 +153,12 @@ class VIBModel(torch.nn.Module):
         std = self.linear2_mean(std)
         std = torch.nn.functional.softplus(std) + 1e-6
 
-        return mean, std
+        return std
 
     def forward(self, left_kmer_profile, right_kmer_profile):
-        left_mean, left_std = self.encoder(left_kmer_profile)
-        right_mean, right_std = self.encoder(right_kmer_profile)
+
+        left_mean, right_mean = self.mean_encoder(left_kmer_profile), self.mean_encoder(right_kmer_profile)
+        left_std, right_std = self.std_encoder(right_kmer_profile), self.std_encoder(right_kmer_profile)
 
         return left_mean, left_std, right_mean, right_std
 
@@ -186,13 +191,13 @@ class VIBModel(torch.nn.Module):
                 kmer_profiles.append(self.read2kmer_profile(read, normalized=normalized))
 
             kmer_profiles = torch.from_numpy(np.asarray(kmer_profiles)).to(torch.float)
-            means, stds = self.encoder(kmer_profiles)
+            means, stds = self.mean_encoder(kmer_profiles), self.std_encoder(kmer_profiles)
             means = means.detach().numpy()
             stds = stds.detach().numpy()
 
         return means, stds
 
-def loss_func(left_mean, left_std, right_mean, right_std, labels, name="bern"):
+def loss_func(left_mean, left_std, right_mean, right_std, labels, name="vib", include_std=True):
 
     # Helper functions
     def log1mexp(p):
@@ -206,28 +211,36 @@ def loss_func(left_mean, left_std, right_mean, right_std, labels, name="bern"):
 
     if name == "vib-nonstable":
 
-        k = 8
-        epsilon = (2**0.5)*torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
+        if include_std:
+            k = 8
+            epsilon = (2**0.5)*torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
 
-        p = torch.mean(
-           torch.exp(-((left_mean - right_mean) + (left_std - right_std)*epsilon )**2),
-           keepdim=False
-        )
+            p = torch.mean(
+                torch.exp(-((left_mean - right_mean) + (left_std - right_std)*epsilon )**2), keepdim=False
+            )
+        else:
+            p = torch.exp(-(left_mean - right_mean)**2)
 
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
     elif name == "vib":
 
-        k = 8
-        epsilon_i = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)  # dim = (k, batch, d)
-        epsilon_j = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)  # dim = (k, batch, d)
-        z_i = left_mean + left_std*epsilon_i  # shape (k, batch, d)
-        z_j = right_mean + right_std*epsilon_j  # shape (k, batch, d)
+        z_i, z_j = left_mean, right_mean  # shape (batch, d)
+
+        if include_std:
+            k = 8
+            epsilon_i = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)  # dim = (k, batch, d)
+            epsilon_j = torch.randn(size=(k, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)  # dim = (k, batch, d)
+            z_i = z_i + left_std*epsilon_i # shape (k, batch, d)
+            z_j = z_j + right_std*epsilon_j  # shape (k, batch, d)
         
-        distance = torch.sum((z_i - z_j)**2, dim=2)  # shape (k, batch)
-        
-        # Get log probabilities, \sum_k exp(-dist) / K (In fact, we don't need the normalization)
-        log_p_yij_ri_rj = torch.logsumexp(-distance, dim=0) - torch.log(torch.tensor(k, dtype=torch.float))
+            distance = torch.sum((z_i - z_j)**2, dim=2)  # shape (k, batch)
+
+            # Get log probabilities, \sum_k exp(-dist) / K (In fact, we don't need the normalization)
+            log_p_yij_ri_rj = torch.logsumexp(-distance, dim=0) - torch.log(torch.tensor(k, dtype=torch.float))
+
+        else:
+            log_p_yij_ri_rj = -torch.sum((z_i - z_j)**2, dim=1)
 
         # Define logits, log(p / (1-p))
         logits = log_p_yij_ri_rj - log1mexp(-log_p_yij_ri_rj)
@@ -237,7 +250,7 @@ def loss_func(left_mean, left_std, right_mean, right_std, labels, name="bern"):
         raise ValueError(f"Unknown loss function name: {name}")
 
 
-def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern"):
+def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern", include_std=True):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     epoch_loss = 0.
@@ -254,7 +267,7 @@ def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern")
         left_mean, left_std, right_mean, right_std = model(left_kmer_profile, right_kmer_profile)
 
         # Compute the loss and backpropagate
-        batch_loss = loss_func(left_mean, left_std, right_mean, right_std, labels, name=loss_name)
+        batch_loss = loss_func(left_mean, left_std, right_mean, right_std, labels, name=loss_name, include_std=include_std)
         batch_loss.backward()
 
         # Update the model parameters
@@ -267,6 +280,10 @@ def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern")
 
     return epoch_loss / len(training_loader)
 
+def set_gradients(parameters, requires_grad):
+
+    for param in parameters:
+        param.requires_grad = requires_grad
 
 def run(model, learning_rate, epoch_num, loss_name="bern", model_save_path=None, loss_file_path=None, checkpoint=0, verbose=True):
 
@@ -275,9 +292,21 @@ def run(model, learning_rate, epoch_num, loss_name="bern", model_save_path=None,
         print("Let's use", torch.cuda.device_count(), "GPUs!")
         model.to(torch.device("cuda:0"))
 
-    # Define the optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # Get the model parameters and set the gradients to False
+    mean_parameters = [param for name, param in model.named_parameters() if 'mean' in name]
+    std_parameters = [param for name, param in model.named_parameters() if 'std' in name]
 
+    # Define the optimizers
+    mean_optimizer = torch.optim.Adam(mean_parameters, lr=learning_rate)
+    all_optimizer = torch.optim.Adam(mean_parameters + std_parameters, lr=learning_rate)
+
+    # We will update the mean parameters in the first half of the epochs
+    include_std = False
+    set_gradients(mean_parameters, True)
+    set_gradients(std_parameters, False)
+    optimizer = mean_optimizer
+
+    # Define the loss curve writer
     if loss_file_path is not None:
         writer = SummaryWriter(loss_file_path)
     if verbose:
@@ -289,7 +318,16 @@ def run(model, learning_rate, epoch_num, loss_name="bern", model_save_path=None,
 
         # Make sure gradient tracking is on, and do a pass over the data
         model.train(True)
-        avg_loss = single_epoch(model, loss_func, optimizer, training_loader, loss_name)
+
+        # For the second half of the epochs, we will update the mean and std parameters together
+        if epoch >= epoch_num // 2:
+            include_std = True
+            set_gradients(mean_parameters + std_parameters, True)
+            optimizer = all_optimizer
+
+        avg_loss = single_epoch(
+            model, loss_func, optimizer, training_loader, loss_name, include_std=include_std
+        )
 
         if verbose:
             print(f"Epoch {epoch + 1}, Training Loss: {avg_loss}")
@@ -334,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=0, help='Batch size (0: no batch)')
     parser.add_argument('--device', type=str, default="cpu", help='Device (cpu or cuda)')
     parser.add_argument('--workers_num', type=int, default=1, help='Number of workers for data loader')
-    parser.add_argument('--loss_name', type=str, default="symmetric_kl", help='Loss function (kl, symmetric_kl, bern-mls, wasserstein)')
+    parser.add_argument('--loss_name', type=str, default="vib", help='Loss function (vib or vib-nonstable)')
     parser.add_argument('--output', type=str, help='Output file')
     parser.add_argument('--seed', type=int, default=26042024, help='Seed for random number generator')
     parser.add_argument('--checkpoint', type=int, default=0, help='Save the model for every checkpoint epoch')
