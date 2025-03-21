@@ -424,8 +424,10 @@ if __name__ == "__main__":
 
     # Run the model
     # run(model, training_dataset, args.batch_size, args.workers_num, args.lr, args.epoch, args.loss_name, args.output, args.output + ".loss", args.checkpoint, verbose=True)
-    args = (
-        args.world_size, model, training_dataset, args.batch_size, args.workers_num, args.lr, args.epoch,
-        args.loss_name, args.output, args.output + ".loss", args.checkpoint, True
+    torch.multiprocessing.spawn(
+        run, nprocs=args.world_size, join=True,
+        args=(
+            args.world_size, model, training_dataset, args.batch_size, args.workers_num, args.lr, args.epoch,
+            args.loss_name, args.output, args.output + ".loss", args.checkpoint, True
+        ),
     )
-    torch.multiprocessing.spawn(run, args=args, nprocs=args.world_size, join=True)
