@@ -309,7 +309,7 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
     )
     # Data Loader: Creates a DataLoader that iterates through batches of data with distributed sampling and batching.
     training_loader = torch.utils.data.DataLoader(
-        training_dataset, batch_size=batch_size, shuffle=True,
+        training_dataset, batch_size=batch_size, shuffle=False,
         num_workers=workers_num, pin_memory=True, sampler=train_sampler
     )
     # Model Initialization: Initializes ResNet-50 model (net) and distributes it across GPUs using DistributedDataParallel.
