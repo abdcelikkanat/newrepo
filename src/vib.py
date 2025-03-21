@@ -251,8 +251,8 @@ def loss_func(left_mean, left_std, right_mean, right_std, labels, name="vib", in
         raise ValueError(f"Unknown loss function name: {name}")
 
 
-def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern", include_std=True):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+def single_epoch(rank, model, loss_func, optimizer, training_loader, loss_name="bern", include_std=True):
+    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     epoch_loss = 0.
     for data in training_loader:
@@ -260,9 +260,9 @@ def single_epoch(model, loss_func, optimizer, training_loader, loss_name="bern",
 
         # Zero your gradients since PyTorch accumulates gradients on subsequent backward passes.
         optimizer.zero_grad()
-        left_kmer_profile = left_kmer_profile.reshape(-1, left_kmer_profile.shape[-1]).to(device)
-        right_kmer_profile = right_kmer_profile.reshape(-1, right_kmer_profile.shape[-1]).to(device)
-        labels = labels.reshape(-1).to(device)
+        left_kmer_profile = left_kmer_profile.reshape(-1, left_kmer_profile.shape[-1]).to(rank)
+        right_kmer_profile = right_kmer_profile.reshape(-1, right_kmer_profile.shape[-1]).to(rank)
+        labels = labels.reshape(-1).to(rank)
 
         # Make predictions for the current epoch
         left_mean, left_std, right_mean, right_std = model(left_kmer_profile, right_kmer_profile)
@@ -351,7 +351,7 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
             optimizer = all_optimizer
 
         avg_loss = single_epoch(
-            model, loss_func, optimizer, training_loader, loss_name, include_std=include_std
+            rank, model, loss_func, optimizer, training_loader, loss_name, include_std=include_std
         )
 
         if verbose:
