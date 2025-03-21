@@ -274,6 +274,7 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
     #     print("Let's use", torch.cuda.device_count(), "GPUs!")
     #     model.to(torch.device("cuda:0"))
     setup(rank, world_size)
+    print(f"Rank {rank}: preparing data..")
 
     # Distributed Sampler: Ensures data is divided among GPUs using DistributedSampler.
     train_sampler = torch.utils.data.distributed.DistributedSampler(
