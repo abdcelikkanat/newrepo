@@ -356,9 +356,7 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
             set_gradients(mean_parameters + std_parameters, True)
             optimizer = all_optimizer
         print("Run single epoch")
-        avg_loss = single_epoch(
-            rank, model, loss_func, optimizer, training_loader, loss_name, include_std=include_std
-        )
+        avg_loss = single_epoch(rank, model, loss_func, optimizer, loss_name, include_std=include_std)
 
         if verbose:
             print(f"Epoch {epoch + 1}, Training Loss: {avg_loss}")
