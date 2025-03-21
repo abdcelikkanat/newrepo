@@ -16,6 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 from torch.utils.data import Dataset, DataLoader
 import re
+import os
 
 def set_seed(seed):
     # Set the seed
@@ -285,12 +286,36 @@ def set_gradients(parameters, requires_grad):
     for param in parameters:
         param.requires_grad = requires_grad
 
-def run(model, learning_rate, epoch_num, loss_name="bern", model_save_path=None, loss_file_path=None, checkpoint=0, verbose=True):
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12345'
+    torch.distributed.dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
 
-    if torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model)
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        model.to(torch.device("cuda:0"))
+def cleanup():
+    torch.distributed.dist.destroy_process_group()
+
+def run(rank, world_size, model, training_dataset, batch_size, workers_num, learning_rate, epoch_num, loss_name="bern", model_save_path=None, loss_file_path=None, checkpoint=0, verbose=True):
+
+    # if torch.cuda.device_count() > 1:
+    #     model = torch.nn.DataParallel(model)
+    #     print("Let's use", torch.cuda.device_count(), "GPUs!")
+    #     model.to(torch.device("cuda:0"))
+    setup(rank, world_size)
+
+    # Distributed Sampler: Ensures data is divided among GPUs using DistributedSampler.
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        training_dataset, num_replicas=world_size, rank=rank
+    )
+    # Data Loader: Creates a DataLoader that iterates through batches of data with distributed sampling and batching.
+    training_loader = torch.utils.data.DataLoader(
+        training_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=workers_num, pin_memory=True, sampler=train_sampler
+    )
+    # Model Initialization: Initializes ResNet-50 model (net) and distributes it across GPUs using DistributedDataParallel.
+    print(f'Rank {rank}: Building model..')
+    model = model.to(rank)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank])
 
     # Get the model parameters and set the gradients to False
     mean_parameters = [param for name, param in model.named_parameters() if 'mean' in name]
@@ -347,6 +372,8 @@ def run(model, learning_rate, epoch_num, loss_name="bern", model_save_path=None,
                 print(f"\t- Target path: {temp_model_save_path}")
 
     writer.close()
+    # Cleanup: Releases distributed training resources after completion.
+    cleanup()
 
     if model_save_path is not None:
         # If the model is a DataParallel object, then save the model.module
@@ -371,6 +398,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--batch_size', type=int, default=0, help='Batch size (0: no batch)')
     parser.add_argument('--device', type=str, default="cpu", help='Device (cpu or cuda)')
+    parser.add_argument('--world_size', type=int, default=1, help='Number of processes for distributed training')
     parser.add_argument('--workers_num', type=int, default=1, help='Number of workers for data loader')
     parser.add_argument('--loss_name', type=str, default="vib", help='Loss function (vib or vib-nonstable)')
     parser.add_argument('--output', type=str, help='Output file')
@@ -388,11 +416,16 @@ if __name__ == "__main__":
         file_path=args.input, transform_func=model.read2kmer_profile, neg_sample_per_pos=args.neg_sample_per_pos,
         max_read_num=args.max_read_num, seed=args.seed
     )
-    # Define the training data loader
-    training_loader = DataLoader(
-        training_dataset, batch_size=args.batch_size if args.batch_size else len(training_dataset),
-        shuffle=True, num_workers=args.workers_num
-    )
+    # # Define the training data loader
+    # training_loader = DataLoader(
+    #     training_dataset, batch_size=args.batch_size if args.batch_size else len(training_dataset),
+    #     shuffle=True, num_workers=args.workers_num
+    # )
 
     # Run the model
-    run(model, args.lr, args.epoch, args.loss_name, args.output, args.output + ".loss", args.checkpoint, verbose=True)
+    # run(model, training_dataset, args.batch_size, args.workers_num, args.lr, args.epoch, args.loss_name, args.output, args.output + ".loss", args.checkpoint, verbose=True)
+    args = (
+        args.world_size, model, training_dataset, args.batch_size, args.workers_num, args.lr, args.epoch,
+        args.loss_name, args.output, args.output + ".loss", args.checkpoint, True
+    )
+    torch.multiprocessing.spawn(run, args=args, nprocs=args.world_size, join=True)
