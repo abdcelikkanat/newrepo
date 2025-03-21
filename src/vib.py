@@ -305,11 +305,15 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
 
     ###
     print("Before single epoch definition")
-    def single_epoch(rank, model, loss_func, optimizer, loss_name="bern", include_std=True):
+    def single_epoch(epoch, model, loss_func, optimizer, loss_name="bern", include_std=True):
         # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        train_sampler.set_epoch(epoch)
 
         epoch_loss = 0.
         for data in training_loader:
+            print(f"Rank {rank}: Epoch {epoch + 1}")
+            '''
             left_kmer_profile, right_kmer_profile, labels = data
 
             # Zero your gradients since PyTorch accumulates gradients on subsequent backward passes.
@@ -332,7 +336,8 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
             # Get the epoch loss for reporting
             epoch_loss += batch_loss.item()
             # del batch_loss, left_kmer_profile, right_kmer_profile, labels, left_output, right_output
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
+            '''
 
         return epoch_loss / len(training_loader)
     #####
@@ -356,7 +361,7 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
             set_gradients(mean_parameters + std_parameters, True)
             optimizer = all_optimizer
         print("Run single epoch")
-        avg_loss = single_epoch(rank, model, loss_func, optimizer, loss_name, include_std=include_std)
+        avg_loss = single_epoch(epoch, model, loss_func, optimizer, loss_name, include_std=include_std)
 
         if verbose:
             print(f"Epoch {epoch + 1}, Training Loss: {avg_loss}")
