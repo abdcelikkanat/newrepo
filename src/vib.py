@@ -289,11 +289,11 @@ def set_gradients(parameters, requires_grad):
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12345'
-    torch.distributed.dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.distributed.init_process_group("nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
 def cleanup():
-    torch.distributed.dist.destroy_process_group()
+    torch.distributed.destroy_process_group()
 
 def run(rank, world_size, model, training_dataset, batch_size, workers_num, learning_rate, epoch_num, loss_name="bern", model_save_path=None, loss_file_path=None, checkpoint=0, verbose=True):
 
