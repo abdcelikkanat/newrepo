@@ -251,35 +251,7 @@ def loss_func(left_mean, left_std, right_mean, right_std, labels, name="vib", in
         raise ValueError(f"Unknown loss function name: {name}")
 
 
-def single_epoch(rank, model, loss_func, optimizer, training_loader, loss_name="bern", include_std=True):
-    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    epoch_loss = 0.
-    for data in training_loader:
-        left_kmer_profile, right_kmer_profile, labels = data
-
-        # Zero your gradients since PyTorch accumulates gradients on subsequent backward passes.
-        optimizer.zero_grad()
-        left_kmer_profile = left_kmer_profile.reshape(-1, left_kmer_profile.shape[-1]).to(rank)
-        right_kmer_profile = right_kmer_profile.reshape(-1, right_kmer_profile.shape[-1]).to(rank)
-        labels = labels.reshape(-1).to(rank)
-
-        # Make predictions for the current epoch
-        left_mean, left_std, right_mean, right_std = model(left_kmer_profile, right_kmer_profile)
-
-        # Compute the loss and backpropagate
-        batch_loss = loss_func(left_mean, left_std, right_mean, right_std, labels, name=loss_name, include_std=include_std)
-        batch_loss.backward()
-
-        # Update the model parameters
-        optimizer.step()
-
-        # Get the epoch loss for reporting
-        epoch_loss += batch_loss.item()
-        #del batch_loss, left_kmer_profile, right_kmer_profile, labels, left_output, right_output
-        torch.cuda.empty_cache()
-
-    return epoch_loss / len(training_loader)
 
 def set_gradients(parameters, requires_grad):
 
@@ -331,6 +303,40 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
     set_gradients(std_parameters, False)
     optimizer = mean_optimizer
 
+    ###
+    print("Before single epoch definition")
+    def single_epoch(rank, model, loss_func, optimizer, loss_name="bern", include_std=True):
+        # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        epoch_loss = 0.
+        for data in training_loader:
+            left_kmer_profile, right_kmer_profile, labels = data
+
+            # Zero your gradients since PyTorch accumulates gradients on subsequent backward passes.
+            optimizer.zero_grad()
+            left_kmer_profile = left_kmer_profile.reshape(-1, left_kmer_profile.shape[-1]).to(rank)
+            right_kmer_profile = right_kmer_profile.reshape(-1, right_kmer_profile.shape[-1]).to(rank)
+            labels = labels.reshape(-1).to(rank)
+
+            # Make predictions for the current epoch
+            left_mean, left_std, right_mean, right_std = model(left_kmer_profile, right_kmer_profile)
+
+            # Compute the loss and backpropagate
+            batch_loss = loss_func(left_mean, left_std, right_mean, right_std, labels, name=loss_name,
+                                   include_std=include_std)
+            batch_loss.backward()
+
+            # Update the model parameters
+            optimizer.step()
+
+            # Get the epoch loss for reporting
+            epoch_loss += batch_loss.item()
+            # del batch_loss, left_kmer_profile, right_kmer_profile, labels, left_output, right_output
+            torch.cuda.empty_cache()
+
+        return epoch_loss / len(training_loader)
+    #####
+
     # Define the loss curve writer
     if loss_file_path is not None:
         writer = SummaryWriter(loss_file_path)
@@ -349,7 +355,7 @@ def run(rank, world_size, model, training_dataset, batch_size, workers_num, lear
             include_std = True
             set_gradients(mean_parameters + std_parameters, True)
             optimizer = all_optimizer
-
+        print("Run single epoch")
         avg_loss = single_epoch(
             rank, model, loss_func, optimizer, training_loader, loss_name, include_std=include_std
         )
@@ -411,11 +417,13 @@ if __name__ == "__main__":
         k=args.k, dim=args.dim, device=torch.device(args.device), verbose=True, seed=args.seed
     )
 
+    init_time = time.time()
     # Read the dataset
     training_dataset = PairDataset(
         file_path=args.input, transform_func=model.read2kmer_profile, neg_sample_per_pos=args.neg_sample_per_pos,
         max_read_num=args.max_read_num, seed=args.seed
     )
+    print("Data construction time: ", time.time() - init_time)
     # # Define the training data loader
     # training_loader = DataLoader(
     #     training_dataset, batch_size=args.batch_size if args.batch_size else len(training_dataset),
