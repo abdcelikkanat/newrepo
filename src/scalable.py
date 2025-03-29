@@ -10,8 +10,7 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 import matplotlib.pyplot as plt
 from functools import partial
 import argparse
-
-from sympy.physics.quantum.gate import normalized
+from torch import device
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 from torch.utils.data import Dataset, DataLoader
@@ -20,6 +19,7 @@ from torch.nn.parallel import DistributedDataParallel
 import re
 import os
 import csv
+import pandas as pd
 
 # Helper functions
 def set_seed(seed: int):
@@ -30,13 +30,13 @@ def set_seed(seed: int):
     random.seed(seed)
     torch.manual_seed(seed)
 
-def log1mexp(p: torch.Tensor):
+def log1mexp(x: torch.Tensor):
     """
-    Compute `log(1 - exp(-x))` elementwise in a numerically stable way.
+    Compute `log(1 - exp(-x))` in a numerically stable way for x > 0
     """
-    log2 = torch.log(torch.tensor(2.0, dtype=p.dtype, device=p.device))
+    log2 = torch.log(torch.tensor(2.0, dtype=x.dtype, device=x.device))
     return torch.where(
-        p < log2, torch.log(-torch.expm1(-p)), torch.log1p(-torch.exp(-p))
+        x < log2, torch.log(-torch.expm1(-x)), torch.log1p(-torch.exp(-x))
     )
 
 class KmerConverter:
@@ -99,10 +99,10 @@ class PairDataset(Dataset):
 
         # Read the file
         left_kmer_profiles, right_kmer_profiles = [], []
-        with open(file_path, 'r') as f:
-            reader = list(csv.reader(f, delimiter=','))
-        for chosen_line_idx in chosen_lines:
-            line = reader[chosen_line_idx]
+        # with open(file_path, 'r') as f:
+        #     reader = list(csv.reader(f, delimiter=','))
+        lines = pd.read_csv(file_path, sep=',', header=None).iloc[chosen_lines].values.tolist()
+        for line in lines:
             left_seq, right_seq = line[0], line[1]
             left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
             right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
@@ -155,7 +155,8 @@ class PairDataset(Dataset):
 
     def __getitem__(self, idx):
 
-        return self.__kmers[self.__indices[0, idx]], self.__kmers[self.__indices[1, idx]], self.__labels[idx]
+        # self.__kmers[self.__indices[0, idx]], self.__kmers[self.__indices[1, idx]], self.__labels[idx]
+        return torch.index_select(self.__kmers, dim=0, index=self.__indices[0, idx]), torch.index_select(self.__kmers, dim=0, index=self.__indices[1, idx]), self.__labels[idx]
 
 
 class VIBModel(torch.nn.Module):
@@ -306,211 +307,161 @@ def loss_func(
         """
 
         var_left, var_right = left_std**2, right_std**2
-        #
-        # var_left, var_right = var_left*0, var_right*0
-
+        ''' '''
         # Compute the terms log(1+2(s_i^2 + s_j^2))
         log1p_cov = torch.log1p(2*(var_left + var_right))
         # Compute the term m_i - m_j
         mean_squared_diff = (left_mean - right_mean)**2
         # Compute the log expectation
         log_expectation = -0.5*log1p_cov.sum(dim=1) - (mean_squared_diff / torch.exp(log1p_cov)).sum(dim=1)
-        # Get the success probability
-        p = torch.exp(log_expectation)
+        # Compute the logits
+        logits = log_expectation - log1mexp(-log_expectation)
 
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
-
+        return torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='mean')
 
     else:
         raise ValueError(f"Unknown loss function name: {loss_name}")
 
-class Trainer:
-    def __init__(
-            self, model: torch.nn.Module, data_loader: DataLoader, optimizer: torch.optim.Optimizer,
-            criterion, distributed: bool, rank: int, save_every: int = 0, output_file: str = None
-    ):
-        self.__model = DistributedDataParallel(model.to(rank), device_ids=[rank]) if distributed else model
-        self.__data_loader = data_loader
-        # self.__lr = lr
-        self.__current_optimizer = optimizer #torch.optim.Adam(self.__model.parameters(), lr=self.__lr)
-        self.__criterion = criterion
-        self.__distributed = distributed
-        self.__rank = rank
-        self.__save_every = save_every
-        self.__output_file = output_file
 
-    def __train_batch(self, left_kmers: torch.Tensor, right_kmers: torch.Tensor, labels: torch.Tensor):
-        # Zero your gradients since PyTorch accumulates gradients on subsequent backward passes.
-        self.__current_optimizer.zero_grad()
+def train_batch(model, criterion, optimizer, left_kmers: torch.Tensor, right_kmers: torch.Tensor, labels: torch.Tensor):
+    # Zero your gradients since PyTorch accumulates gradients on subsequent backward passes.
+    optimizer.zero_grad()
 
-        # Make predictions for the current epoch
-        left_mean, left_std, right_mean, right_std = self.__model(left_kmers, right_kmers)
+    # Make predictions for the current epoch
+    left_mean, left_std, right_mean, right_std = model(left_kmers, right_kmers)
 
-        # Compute the loss and backpropagate
-        batch_loss = self.__criterion(left_mean, left_std, right_mean, right_std, labels)
-        batch_loss.backward()
+    # Compute the loss and backpropagate
+    batch_loss = criterion(left_mean, left_std, right_mean, right_std, labels)
+    batch_loss.backward()
 
-        # Update the model parameters
-        self.__current_optimizer.step()
+    # Update the model parameters
+    optimizer.step()
 
-        return batch_loss
+    return batch_loss
 
-    def __train_single_epoch(self, epoch: int):
+def train_single_epoch(device, model, criterion, optimizer, data_loader):
+
+    epoch_loss = 0.
+    for data in data_loader:
+
+        left_kmers, right_kmers, labels = data
+        left_kmers = left_kmers.reshape(-1, left_kmers.shape[-1]).to(device)
+        right_kmers = right_kmers.reshape(-1, right_kmers.shape[-1]).to(device)
+        labels = labels.reshape(-1).to(device)
+
+        # Run the training for the current batch
+        batch_loss = train_batch(
+            model=model, criterion=criterion, optimizer=optimizer,
+            left_kmers=left_kmers, right_kmers=right_kmers, labels=labels
+        )
+
+        # Get the epoch loss for reporting
+        epoch_loss += batch_loss
+
+    # Get the average epoch loss
+    average_epoch_loss = epoch_loss.item() / len(data_loader)
+
+    return average_epoch_loss
+
+def train(device, distributed, model, criterion, optimizer, data_loader, epoch_num: int, save_every:int, output_path):
+
+    # Switch the model to training mode
+    model.train()
+
+    ## Start training
+    print(f"+ Training started.")
+    for current_epoch in range(epoch_num):
 
         # Set the epoch for the sampler
-        # TODO: Check if this is necessary
-        if self.__distributed:
-            self.__data_loader.sampler.set_epoch(epoch)
+        if distributed:
+            data_loader.sampler.set_epoch(current_epoch)
 
-        epoch_loss = 0.
-        for data in self.__data_loader:
+        ## Run the training for the current epoch
+        init_time = time.time()
+        loss = train_single_epoch(
+            device=device, model=model, criterion=criterion, optimizer=optimizer, data_loader=data_loader
+        )
+        print(f"\t- Epoch: {current_epoch}/{epoch_num} - Loss: {loss} ({time.time() - init_time:.2f} secs)")
 
-            left_kmer_profile, right_kmer_profile, labels = data
-            left_kmer_profile = left_kmer_profile.reshape(-1, left_kmer_profile.shape[-1])
-            right_kmer_profile = right_kmer_profile.reshape(-1, right_kmer_profile.shape[-1])
-            labels = labels.reshape(-1)
-            if self.__distributed:
-                left_kmer_profile = left_kmer_profile.to(self.__rank)
-                right_kmer_profile = right_kmer_profile.to(self.__rank)
-                labels = labels.to(self.__rank)
+        ## Save the checkpoint if necessary
+        if save_every > 0 and (current_epoch + 1) % save_every == 0:
+            # Get the folder path of the output file and define the checkpoint path
+            checkpoint_path = os.path.join(output_path+f".epoch_{current_epoch+1}.checkpoint")
+            if distributed:
+                if device == 0:
+                    model.module.save(checkpoint_path)
+            else:
+                model.save(checkpoint_path)
 
-            # Run the training for the current batch
-            batch_loss = self.__train_batch(left_kmer_profile, right_kmer_profile, labels)
-
-            # Get the epoch loss for reporting
-            epoch_loss += batch_loss
-
-        # Get the average epoch loss
-        average_epoch_loss = epoch_loss.item() / len(self.__data_loader)
-
-
-        return average_epoch_loss
-
-    def start(self, epoch_num: int):
-
-        # Switch the model to training mode
-        self.__model.train()
-
-        ## Start training
-        print(f"+ Training started.")
-        for current_epoch in range(epoch_num):
-
-            # Run the training for the current epoch
-            loss = self.__train_single_epoch(epoch=current_epoch)
-            print(f"\t- Epoch: {current_epoch}/{epoch_num} GPU:{self.__rank} - Loss: {loss}")
-
-            # Save the checkpoint if necessary
-            if self.__save_every > 0 and (current_epoch + 1) % self.__save_every == 0:
-                if self.__rank == 0:
-                    # Get the folder path of the output file
-                    output_folder = os.path.dirname(self.__output_file)
-                    # Define the checkpoint path
-                    checkpoint_path = os.path.join(output_folder, f"checkpoint_epoch_{current_epoch}.model")
-                    if self.__distributed:
-                        self.__model.module.save(checkpoint_path)
-                    else:
-                        self.__model.save(checkpoint_path)
-
-            # To ensure that all processes have finished the current epoch
-            if self.__distributed:
-                torch.distributed.barrier()
-
-        print(self.__output_file)
-        if self.__distributed:
-            self.__model.module.save(self.__output_file)
-        else:
-            self.__model.save(self.__output_file)
-
-        print(f"\t- Completed.")
-
-
-
-def load_training_objects(
-        input_file_path: str, k: int, out_dim:int, lr:float, neg_sample_per_pos:int, max_seq_num:int, seed:int
-):
-    # Read the dataset
-    training_dataset = PairDataset(
-        file_path=input_file_path, k=k,
-        neg_sample_per_pos=neg_sample_per_pos, max_seq_num=max_seq_num, seed=seed
-    )
-    # Define the model
-    model = VIBModel(k=k, out_dim=out_dim, seed=seed)
-    # Define the optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-
-    return training_dataset, model, optimizer
-
-
-def ddp_setup(rank:torch.device, world_size:int, distributed:bool):
+        # # To ensure that all processes have finished the current epoch
+        # if distributed:
+        #     torch.distributed.barrier()
 
     if distributed:
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = "12355"
-        backend = 'nccl'
-        torch.cuda.set_device(rank)
-        torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
+        if device == 0:
+            model.module.save(output_path)
+            print(f"Model saved to {output_path}")
     else:
-        raise NotImplemented
-
-
-def ddp_cleanup():
-    # Wait for all processes to complete
-    torch.distributed.barrier()
-    # Release the distributed training resources
-    torch.distributed.destroy_process_group()
+        model.save(output_path)
+        print(f"Model saved to {output_path}")
+    print(f"\t- Completed (Device {device}).")
 
 def main_worker(
-        rank, world_size, input_file_path: str, k: int, out_dim: int, lr:float, neg_sample_per_pos: int,
-        max_seq_num: int, epoch_num:int, batch_size:int, save_every: int, loss_name: str, output_path: str,
-        distributed:bool, seed: int, verbose:bool=True
+        device, world_size, distributed:bool, input_file_path: str, output_path: str, neg_sample_per_pos: int,
+        max_seq_num: int, k: int, out_dim: int, lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int,
+        loss_name: str, seed: int, verbose:bool=True
 ):
-    # Setup the distributed training
-    ddp_setup(rank, world_size, distributed=distributed)
+    ### Initialize the device
+    if distributed:
+        # Set the environment variables for distributed training if not already set
+        if "MASTER_ADDR" not in os.environ:
+            os.environ["MASTER_ADDR"] = "localhost"
+        if "MASTER_PORT" not in os.environ:
+            os.environ["MASTER_PORT"] = "12355"
+        print(f"+ MASTER_ADDR: {os.environ['MASTER_ADDR']} and MASTER_PORT: {os.environ['MASTER_PORT']}")
+        torch.cuda.set_device(device)
+        torch.distributed.init_process_group(backend='nccl', rank=device, world_size=world_size)
 
-    run(
-        rank, world_size, input_file_path, k, out_dim, lr, neg_sample_per_pos, max_seq_num, epoch_num, batch_size,
-        save_every, loss_name, output_path, distributed, seed, verbose
+    ### Read the dataset and construct the data loader
+    training_dataset = PairDataset(
+        file_path=input_file_path, k=k, neg_sample_per_pos=neg_sample_per_pos, max_seq_num=max_seq_num, seed=seed
+    )
+    # Define a DataLoader that iterates through batches of data.
+    training_loader = DataLoader(
+        training_dataset, batch_size=batch_size, num_workers=workers_num, pin_memory=True,
+        sampler=DistributedSampler(training_dataset) if distributed else None,
+        shuffle=False if distributed else True,
     )
 
-    # Cleanup: Releases distributed training resources after completion.
-    ddp_cleanup()
+    ### Define the model
+    model = VIBModel(k=k, out_dim=out_dim, seed=seed)
+    if distributed:
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        model = DistributedDataParallel(model.to(f"cuda:{device}"), device_ids=[device])
+    else:
+        model.to(device)
 
-def run(
-        rank, world_size, input_file_path: str, k: int, out_dim: int, lr:float, neg_sample_per_pos: int,
-        max_seq_num: int, epoch_num:int, batch_size:int, save_every: int, loss_name: str, output_path: str,
-        distributed:bool, seed: int, verbose:bool=True
-):
-    # Load the training objects
-    training_dataset, model, optimizer = load_training_objects(
-        input_file_path=input_file_path, k=k, out_dim=out_dim, lr=lr,
-        neg_sample_per_pos=neg_sample_per_pos, max_seq_num=max_seq_num, seed=seed
-    )
+    ### Define the optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    # Define the loss function
+    ### Define the loss function
     criterion = partial(loss_func, loss_name=loss_name, include_std=False)
 
+    ### Train the model
+    train(
+        device=device, distributed=distributed, model=model, criterion=criterion, optimizer=optimizer,
+        data_loader=training_loader, epoch_num=epoch_num, save_every=save_every, output_path=output_path
+    )
+
     if distributed:
-        training_sampler = DistributedSampler(training_dataset, num_replicas=world_size, rank=rank)
-    else:
-        training_sampler = None
-
-    # Define a DataLoader that iterates through batches of data with distributed sampling and batching.
-    training_loader = DataLoader(
-        training_dataset, batch_size=batch_size, shuffle=True if distributed is None else False,
-        num_workers=world_size, pin_memory=True, sampler=training_sampler
-    )
-
-    # Initializes Trainer object with model, data_loader, optimizer, loss function, rank, and save_every.
-    trainer = Trainer(
-        model, training_loader, optimizer, criterion, distributed=distributed, rank=rank,
-        save_every=save_every, output_file=output_path
-    )
-    trainer.start(epoch_num)
+        # Wait for all processes to complete
+        torch.distributed.barrier()
+        # Release the distributed training resources
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Evaluate clustering')
+    parser = argparse.ArgumentParser(description='Train the model')
     parser.add_argument('--input', type=str, help='Input sequence file', required=True)
     parser.add_argument('--output_path', type=str, help='Model file path to save', required=True)
     parser.add_argument('--k', type=int, default=4, help='k value')
@@ -522,23 +473,45 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=10000, help='Batch size (0: no batch)')
     parser.add_argument('--save_every', type=int, default=0, help='Save checkpoint every x epochs (0 for no checkpoint)')
     parser.add_argument('--distributed', type=int, default=1)
-    parser.add_argument('--world_size', type=int, default=1, help='Number of processes for distributed training')
+    parser.add_argument('--device', type=str, default='cpu', help='Device to use (cpu, mps or gpu)')
+    parser.add_argument('--workers', type=int, default=2, help='Number of data loading workers')
     parser.add_argument('--loss_name', type=str, default="vib", help='Loss function (bern, vib, non_stable_vib and vib_without_sampling)')
     parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
     args = parser.parse_args()
 
-    world_size = torch.cuda.device_count()
+    # Define the world size, i.e. total number of processes participating in the distributed training job
+    world_size = None
+    if args.distributed:
+        assert torch.cuda.is_available(), "Distributed training requires CUDA"
+        nodes_num = 1
+        world_size = torch.cuda.device_count() * nodes_num
+    else:
+        if args.device == "gpu":
+            assert torch.cuda.is_available(), "GPU is not available"
+            device = torch.device(f"cuda")
+        elif args.device == "mps":
+            assert torch.backends.mps.is_available(), "MPS is not available"
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
+
+
     print(f"+ Information")
-    print(f"\t- Number of GPUs: {world_size}")
-    print(f"\t- Loss name: {args.loss_name}")
+    if args.distributed:
+        print(f"\t- Distributed training is activated with {world_size} GPUs")
+    else:
+        print(f"\t- No distributed training")
+        print(f"\t- Device: {device}")
+    print(f"\t- Loss function: {args.loss_name}")
+    print(f"\t- Batch size: {args.batch_size}")
 
     arguments = (
-        world_size, args.input, args.k, args.out_dim, args.lr, args.neg_sample_per_pos, args.max_seq_num,
-        args.epoch, args.batch_size, args.save_every, args.loss_name, args.output_path, args.distributed, args.seed, True
+        world_size, args.distributed, args.input, args.output_path, args.neg_sample_per_pos, args.max_seq_num, args.k,
+        args.out_dim, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,  args.seed,
+        True
     )
-    if world_size > 1 or args.distributed:
+    if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
     else:
-        print(f"\t- Running on the CPU")
-        run(*((0,) + arguments))
+        main_worker(*((device,) + arguments))
     print("Completed.")
