@@ -36,14 +36,14 @@ def get_embedding(
 
     # Load the embedding file if it exits
     if os.path.exists(embedding_file_path):
-        print(f"Load embeddings from file {embedding_file_path}")
+        print(f"\t- Load embeddings from file {embedding_file_path}")
         output = np.load(embedding_file_path)
         if output.ndim == 3:
             # If the output is a tuple of embedding and covariances
             output = (output[0], output[1])
 
     else:
-        print(f"Calculate embedding for {model_name} {species} {sample_id}")
+        print(f"\t- Calculate embedding for the {species} {sample_id} data by {model_name} model")
 
         if model_name == "tnf":
 
@@ -183,7 +183,7 @@ def compute_class_center_medium_similarity(features, labels, metric="dot", chunk
     for percentile in [10, 20, 30, 40, 50, 60, 70, 80, 90]:
         value = all_similarities[int(percentile / 100 * len(embeddings))]
         percentile_values.append(value)
-    print("Percentile values:", percentile_values)
+    print(f"+ Percentile values: {np.asarray(percentile_values)}")
 
     return percentile_values
 
@@ -191,16 +191,19 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
 
     # Compute the similarities between the features
     similarities = compute_similarity_matrix(features, metric=metric, chunk_size=chunk_size)
-    raise ValueError("min value:", similarities.min(), "max value:", similarities.max())
+    base_point = similarities.min() - 1
 
     # Set the values below min_similarity to 0
     similarities[similarities < min_similarity] = 0
 
-    p = -np.ones(len(features[0]), dtype=int) if isinstance(features, tuple) else -np.ones(len(features), dtype=int)
-    row_sum = np.sum(similarities, axis=1)
+    if isinstance(features, tuple):
+        p = -base_point * np.ones(len(features[0]), dtype=float)
+    else:
+        p = -base_point * np.ones(len(features), dtype=float)
 
+    row_sum = np.sum(similarities, axis=1)
     iter_count = 1
-    while np.any(p == -1):
+    while np.any(p == -base_point):
 
         if iter_count == max_iter:
             break
@@ -224,7 +227,7 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
             # Determine the indices that are within the similarity threshold
             idx_within = similarity >= min_similarity
             # Determine the available indices, i.e. the indices that have not been assigned to a cluster yet
-            idx_available = p == -1
+            idx_available = (p == -base_point)
             # Get the indices that are both within the similarity threshold and available
             selected_idx = np.where(np.logical_and(idx_within, idx_available))[0]
             # Determine the new k-medoid
@@ -248,7 +251,7 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
     unique, counts = np.unique(p, return_counts=True)
     for label, count in zip(unique, counts):
         if count < min_bin_size:
-            p[p == label] = -1
+            p[p == label] = -base_point
 
     return p
 
@@ -454,22 +457,22 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
             similarities = np.zeros((means_left.shape[0], means_right.shape[0]))
             for i in range(0, means_left.shape[0], chunk_size):
                 # Compute the terms log(1+2(s_i^2 + s_j^2))
-                log1p_cov = np.log1p(2 * (vars_left[i:i + chunk_size, :] + vars_right))
+                log1p_cov = np.log1p(2 * (vars_left[i:i + chunk_size, :][:, np.newaxis] + vars_right))
                 # Compute the term m_i - m_j
-                mean_squared_diff = (means_left[i:i + chunk_size, :] - means_right) ** 2
+                mean_squared_diff = (means_left[i:i + chunk_size, :][:, np.newaxis] - means_right) ** 2
                 # Compute the log expectation
-                log_expectation = -0.5 * log1p_cov.sum(axis=1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=1)
+                log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=-1)
                 # Compute the similarity
                 similarities[i:i + chunk_size, :] = log_expectation #np.exp(log_expectation)
 
         else:
 
             # Compute the terms log(1+2(s_i^2 + s_j^2))
-            log1p_cov = np.log1p(2 * (vars_left + vars_right))
+            log1p_cov = np.log1p(2 * (vars_left[:, np.newaxis] + vars_right))
             # Compute the term m_i - m_j
-            mean_squared_diff = (means_left - means_right) ** 2
+            mean_squared_diff = (means_left[:, np.newaxis] - means_right) ** 2
             # Compute the log expectation
-            log_expectation = -0.5 * log1p_cov.sum(axis=1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=1)
+            log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=-1)
             # Compute the similarity
             similarities = log_expectation #np.exp(log_expectation)
 

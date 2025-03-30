@@ -227,7 +227,9 @@ class VIBModel(torch.nn.Module):
         Get the embeddings for the given list of DNA sequences
         """
 
-        kmers = torch.asarray([self.__kc.seq2kmer(seq, normalized=normalized) for seq in sequences], dtype=torch.float)
+        kmers = torch.from_numpy(
+            np.asarray([self.__kc.seq2kmer(seq, normalized=normalized) for seq in sequences])
+        ).to(torch.float)
 
         with torch.no_grad():
             self.eval()
