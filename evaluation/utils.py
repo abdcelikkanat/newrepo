@@ -187,11 +187,11 @@ def compute_class_center_medium_similarity(features, labels, metric="dot", chunk
 
     return percentile_values
 
-def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric="dot", chunk_size=512):
+def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="dot", chunk_size=512):
 
     # Compute the similarities between the features
     similarities = compute_similarity_matrix(features, metric=metric, chunk_size=chunk_size)
-    base_point = similarities.min() - 1
+    base_point = 1
 
     # Set the values below min_similarity to 0
     similarities[similarities < min_similarity] = 0
@@ -463,7 +463,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
                 # Compute the log expectation
                 log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=-1)
                 # Compute the similarity
-                similarities[i:i + chunk_size, :] = log_expectation #np.exp(log_expectation)
+                similarities[i:i + chunk_size, :] = np.exp(log_expectation) #log_expectation #np.exp(log_expectation)
 
         else:
 
@@ -474,7 +474,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
             # Compute the log expectation
             log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=-1)
             # Compute the similarity
-            similarities = log_expectation #np.exp(log_expectation)
+            similarities = np.exp(log_expectation) #log_expectation #np.exp(log_expectation)
 
     else:
         raise ValueError("Invalid metric!")
