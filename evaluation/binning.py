@@ -7,6 +7,7 @@ import sys
 import collections
 import numpy as np
 import sklearn.metrics
+import time
 from datetime import datetime
 from evaluation.utils import align_labels_via_hungarian_algorithm
 from evaluation.utils import get_embedding, KMedoid, compute_class_center_medium_similarity
@@ -22,23 +23,25 @@ def main(args):
     model_list = args.model_list.split(",")
     for model_name in model_list:
         for species in args.species.split(","):
-            for sample in map(int, args.samples.split(",")):
+            for sample_id in map(int, args.sample_ids.split(",")):
 
                 # Define the metric for the given method
                 metric = args.metric
                 if metric == None:
                     raise ValueError(f"Metric was not chosen for the model {model_name}")
 
-                print(f"Model: {model_name} Species: {species} Sample ID: {sample} Metric: {metric} Scalable: {args.scalable}")
+                print(f"+ Model: {model_name} Species: {species} Sample ID: {sample_id} Metric: {metric} Chunk size: {args.chunk_size}")
 
                 ########################################################################################################
                 # =================== Compute the threshold value required for the k-Medoid algorithm ==================
                 ########################################################################################################
                 # Load the clustering data to compute similarity threshold
+                init_time = time.time()
                 clustering_data_file_path = os.path.join(args.data_dir, species, f"clustering_0.tsv")
                 with open(clustering_data_file_path, "r") as f:
                     reader = csv.reader(f, delimiter="\t")
                     data = list(reader)[1:]
+                print(f"+ Clustering data file was read in {time.time() - init_time:.2f} seconds")
 
                 # Shorten the sequences if they are longer than the MAX_SEQ_LEN value
                 dna_sequences = [d[0][:MAX_SEQ_LEN] for d in data]
@@ -48,33 +51,39 @@ def main(args):
                 label2id = {l: i for i, l in enumerate(set(labels))}
                 labels = np.array([label2id[l] for l in labels])
                 num_clusters = len(label2id)
-                print(f"Clustering data contains {len(dna_sequences)} sequences with {num_clusters} clusters.")
+                print(f"+ Clustering data contains {len(dna_sequences)} sequences with {num_clusters} clusters.")
 
-                # Define the embedding file path. If the file exist, we don't need to recompute the dna embeddings
-                cluster_embs_file_path = os.path.join(
-                    "temp_dna_embeddings", species, f"clustering_{sample}{args.suffix}", f"{model_name}.npy"
-                ) if args.cluster_emb_file == "" else args.cluster_emb_file
-
+                # # Define the embedding/feature file path. If file exist, we don't need to recompute the dna embeddings
+                cluster_embs_file_path = ""
+                if args.feature_folder != "":
+                    filename = os.path.basename(args.model_path) + ".features"
+                    cluster_embs_file_path = os.path.join(args.feature_folder, species, f"clustering_{sample_id}",filename)
                 # Get embeddings (and covariances) of the sequences in the dataset named clustering
+                init_time = time.time()
                 features = get_embedding(
-                    dna_sequences=dna_sequences, model_name=model_name, species=species, sample=0,
+                    dna_sequences=dna_sequences, model_name=model_name, species=species, sample_id=0,
                     k=args.k, model_path=args.model_path, embedding_file_path=cluster_embs_file_path,
                 )
+                print(f"+ Embeddings of the clustering data were computed in {time.time() - init_time:.2f} seconds")
 
                 # We need to compute the similarity threshold that is required for the k-medoid algorithm
-                percentile_values = compute_class_center_medium_similarity(features, labels, metric=metric, scalable=True)
+                init_time = time.time()
+                percentile_values = compute_class_center_medium_similarity(
+                    features, labels, metric=metric, chunk_size=args.chunk_size
+                )
                 threshold = percentile_values[-3]
-                print(f"Threshold value: {threshold}")
+                print(f"+ Threshold value: {threshold} and it was computed in {time.time() - init_time:.2f} seconds")
 
                 ########################################################################################################
                 # ========================================= Evaluate the model =========================================
                 ########################################################################################################
                 # Load binning data
-                data_file = os.path.join(args.data_dir, species, f"binning_{sample}.tsv")
-
+                init_time = time.time()
+                data_file = os.path.join(args.data_dir, species, f"binning_{sample_id}.tsv")
                 with open(data_file, "r") as f:
                     reader = csv.reader(f, delimiter="\t")
                     data = list(reader)[1:]
+                print(f"+ Binning file (binning_{sample_id}.tsv) was read in {time.time() - init_time:.2f} seconds")
 
                 # Get the dna sequences nd labels, and shorten the sequences whose length is longer than 'MAX_SEQ_LEN'
                 dna_sequences = [d[0][:MAX_SEQ_LEN] for d in data]
@@ -97,20 +106,25 @@ def main(args):
                 num_clusters = len(label2id)
                 print(f"Get {len(dna_sequences)} sequences, {num_clusters} clusters")
 
-                # Define the embedding file path. If the file exist, we don't recompute the dna embeddings
-                embedding_file_path = os.path.join(
-                    "temp_dna_embeddings", species, f"binning_{sample}{args.suffix}", f"{model_name}.npy"
-                )
+                # Define the embedding/feature file path. If the file exist, we don't recompute the dna embeddings
+                embedding_file_path = ""
+                if args.feature_folder != "":
+                    filename = os.path.basename(args.model_path) + ".features"
+                    embedding_file_path = os.path.join(args.feature_folder, species, f"binning_{sample_id}", filename)
                 # Generate embeddings for the binning set
+                init_time = time.time()
                 features = get_embedding(
-                    dna_sequences=dna_sequences, model_name=model_name, species=species, sample=sample,
+                    dna_sequences=dna_sequences, model_name=model_name, species=species, sample_id=sample_id,
                     k=args.k, model_path=args.model_path, embedding_file_path=embedding_file_path,
                 )
+                print(f"+ Embeddings of binning_{sample_id}.tsv were computed in {time.time() - init_time:.2f} seconds")
                 # Run the k-medoid algorithm
+                init_time = time.time()
                 binning_results = KMedoid(
                     features, min_similarity=threshold, min_bin_size=10,
-                    max_iter=1000, metric=metric, scalable=args.scalable
+                    max_iter=1000, metric=metric, chunk_size=args.chunk_size
                 )
+                print(f"+ Binning results were computed in {time.time() - init_time:.2f} seconds")
                 # Get the number of true labels and predictied labels
                 true_labels_bin = labels_bin[binning_results != -1]
                 predicted_labels = binning_results[binning_results != -1]
@@ -141,7 +155,7 @@ def main(args):
                 with open(args.output, 'a+') as f:
                     f.write("\n")
                     f.write(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
-                    f.write(f"model: {model_name}, species: {species}, sample: {sample}, binning\n")
+                    f.write(f"model: {model_name}, species: {species}, sample_id: {sample_id}, binning\n")
                     f.write(f"recall_results: {recall_results}\n")
                     f.write(f"f1_results: {f1_results}\n")
                     f.write(f"threshold: {threshold}\n\n")
@@ -153,7 +167,7 @@ if __name__ == "__main__":
         '--species', type=str, default="reference,marine,plant", help='Species to evaluate'
     )
     parser.add_argument(
-        '--samples', type=str, default="5,6",
+        '--sample_ids', type=str, default="5,6",
         help='Species to evaluate'
     )
     parser.add_argument(
@@ -165,8 +179,8 @@ if __name__ == "__main__":
         help='Directory to save trained models to test'
     )
     parser.add_argument(
-        '--cluster_emb_file', type=str, default="",
-        help='File path to store the embeddings of the cluster file used to detect an optimal threshold value'
+        '--feature_folder', type=str, default="",
+        help='Folder path to store the features/embeddings of the sequences in order to avoid recomputing them'
     )
     parser.add_argument(
         '--model_list', type=str, default="dnaberts",
@@ -182,12 +196,8 @@ if __name__ == "__main__":
         help="Metric to measure the similarities among embeddings"
     )
     parser.add_argument(
-        '--scalable', type=bool, default=0,
-        help="Controls how we compute the similarity among embeddings"
-    )
-    parser.add_argument(
-        '--suffix', type=str, default="",
-        help="Suffix to add to the output embedding file"
+        '--chunk_size', type=bool, default=0,
+        help="Defines the size of the chunk to be used for the similarity matrix computation"
     )
     args = parser.parse_args()
     main(args)

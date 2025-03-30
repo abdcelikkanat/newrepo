@@ -1,5 +1,7 @@
 # This script has been adapted from the file available at the following address:
 # https://github.com/MAGICS-LAB/DNABERT_S/blob/main/evaluate/eval_binning.py
+from math import log1p
+
 import numpy as np
 import transformers
 import torch
@@ -10,7 +12,8 @@ import os
 from scipy.spatial import distance
 import itertools
 from sklearn.preprocessing import normalize
-from src.vib import VIBModel
+# from src.vib import VIBModel
+from src.scalable import VIBModel
 from scipy.optimize import linear_sum_assignment
 
 # # Here, we define the batch sizes for inference. It might be important for the memory requirements of the model.
@@ -20,10 +23,10 @@ from scipy.optimize import linear_sum_assignment
 
 
 def get_embedding(
-        dna_sequences, model_name, species, sample, k=4, model_path=None, embedding_file_path = None,
+        dna_sequences, model_name, species, sample_id, k=4, model_path=None, embedding_file_path = None,
 ):
     """
-    Get the embeddings (and covariances dependindg on method) of the DNA sequences using the specified model.
+    Get the embeddings (and covariances depending on the method) of the DNA sequences using the specified model.
 
     """
 
@@ -31,15 +34,16 @@ def get_embedding(
     # This is for inference only, not training and it is important for the memory requirements
     batch_size = 10  # MODEL2BATCH_SIZE[model_name]
 
-    assert embedding_file_path is not None, "The embedding file path must be provided!"
-
     # Load the embedding file if it exits
     if os.path.exists(embedding_file_path):
         print(f"Load embeddings from file {embedding_file_path}")
         output = np.load(embedding_file_path)
+        if output.ndim == 3:
+            # If the output is a tuple of embedding and covariances
+            output = (output[0], output[1])
 
     else:
-        print(f"Calculate embedding for {model_name} {species} {sample}")
+        print(f"Calculate embedding for {model_name} {species} {sample_id}")
 
         if model_name == "tnf":
 
@@ -107,24 +111,35 @@ def get_embedding(
             # Note that the output is a tuple of embedding and covariances
             output = (embedding, stds)
 
+        elif model_name == "scalable_vib":
+
+            kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
+            vib = VIBModel(**kwargs)
+            vib.load_state_dict(model_state_dict)
+            embedding, stds = vib.seq2emb(dna_sequences)
+            # Note that the output is a tuple of embedding and covariances
+            output = (embedding, stds)
+
         else:
             raise ValueError(f"Unknown model {model_name}")
 
-        # Get the directory of the embedding file
-        embedding_file_dir = os.path.dirname(embedding_file_path)
-        # Save the embedding file
-        os.makedirs(embedding_file_dir, exist_ok=True)
-        with open(embedding_file_path, 'wb') as f:
-            np.save(f, output)
+        # Save the embedding file if a valid path is provided
+        if embedding_file_path != "":
+            # Get the directory of the embedding file
+            embedding_file_dir = os.path.dirname(embedding_file_path)
+            # Save the embedding file
+            os.makedirs(embedding_file_dir, exist_ok=True)
+            with open(embedding_file_path, 'wb') as f:
+                np.save(f, output)
 
     return output
 
-def compute_class_center_medium_similarity(features, labels, metric="dot", scalable=False):
+def compute_class_center_medium_similarity(features, labels, metric="dot", chunk_size=512):
 
     # Sort the embeddings (and covariances if exists) by labels
     idx = np.argsort(labels)
     labels = labels[idx]
-    if type(features) is tuple:
+    if isinstance(features, tuple):
         embeddings, covs = features[0][idx], features[1][idx]
     else:
         embeddings, covs = features[idx], None
@@ -154,7 +169,9 @@ def compute_class_center_medium_similarity(features, labels, metric="dot", scala
             features2 = (features2, covs[start:end])
 
         # Compute the similarity matrix between the two sets of features
-        similarities = compute_similarity_matrix(features1=features1, features2=features2, metric=metric, scalable=scalable).reshape(-1)
+        similarities = compute_similarity_matrix(
+            features1=features1, features2=features2, metric=metric, chunk_size=chunk_size
+        ).reshape(-1)
 
         # Store the similarities in the all_similarities array
         all_similarities[start:end] = similarities
@@ -170,15 +187,16 @@ def compute_class_center_medium_similarity(features, labels, metric="dot", scala
 
     return percentile_values
 
-def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric="dot", scalable=False):
+def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric="dot", chunk_size=512):
 
     # Compute the similarities between the features
-    similarities = compute_similarity_matrix(features, metric=metric, scalable=scalable)
+    similarities = compute_similarity_matrix(features, metric=metric, chunk_size=chunk_size)
+    raise ValueError("min value:", similarities.min(), "max value:", similarities.max())
 
     # Set the values below min_similarity to 0
     similarities[similarities < min_similarity] = 0
 
-    p = -np.ones(len(features[0]), dtype=int) if type(features) is tuple else -np.ones(len(features), dtype=int)
+    p = -np.ones(len(features[0]), dtype=int) if isinstance(features, tuple) else -np.ones(len(features), dtype=int)
     row_sum = np.sum(similarities, axis=1)
 
     iter_count = 1
@@ -190,17 +208,17 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
         # Select the seed index, i.e. medoid index (Line 4)
         s = np.argmax(row_sum)
         # Initialize the current medoid (Line 4)
-        current_medoid = (features[0][s], features[1][s]) if type(features) is tuple else features[s]
+        current_medoid = (features[0][s], features[1][s]) if isinstance(features, tuple) else features[s]
         selected_idx = None
         # Optimize the current medoid (Line 5-8)
         for t in range(3):
             # For the current medoid, find its similarities
-            if type(features) is tuple:
+            if isinstance(features, tuple):
                 features2 = (np.expand_dims(current_medoid[0], axis=0), np.expand_dims(current_medoid[1], axis=0))
             else:
                 features2 = np.expand_dims(current_medoid, axis=0)
             similarity = compute_similarity_matrix(
-                features1=features, features2=features2, metric=metric, scalable=scalable
+                features1=features, features2=features2, metric=metric, chunk_size=chunk_size
             ).squeeze()
 
             # Determine the indices that are within the similarity threshold
@@ -210,7 +228,7 @@ def KMedoid(features, min_similarity=0.8, min_bin_size=100, max_iter=300, metric
             # Get the indices that are both within the similarity threshold and available
             selected_idx = np.where(np.logical_and(idx_within, idx_available))[0]
             # Determine the new k-medoid
-            if type(features) is tuple:
+            if isinstance(features, tuple):
                 current_medoid = (np.mean(features[0][selected_idx], axis=0), np.mean(features[1][selected_idx], axis=0))
             else:
                 current_medoid = np.mean(features[selected_idx], axis=0)
@@ -365,7 +383,7 @@ def align_labels_via_hungarian_algorithm(true_labels, predicted_labels):
     return label_mapping
 
 
-def compute_similarity_matrix(features1, features2 = None, metric="dot", scalable=False):
+def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_size=512):
     """
     Compute the similarity matrix between two sets of features
     """
@@ -374,26 +392,26 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
 
     if metric == "dot":
 
-        if type(features1) is tuple:
+        if isinstance(features1, tuple):
             features1, features2 = features1[0], features2[0]
 
-        if scalable:
+        if chunk_size:
             similarities = np.zeros((features1.shape[0], features2.shape[0]))
-            for i in range(0, features1.shape[0], 512):
-                similarities[i:i + 512, :] = features1[i:i + 512, :] @ features2.T
+            for i in range(0, features1.shape[0], chunk_size):
+                similarities[i:i + chunk_size, :] = features1[i:i + chunk_size, :] @ features2.T
         else:
             similarities = np.dot(features1, features2.T)
 
     elif metric == "euclidean" or metric == "l2":
 
-        if type(features1) is tuple:
+        if isinstance(features1, tuple):
             features1, features2 = features1[0], features2[0]
 
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.))
 
     elif metric == "l1":
 
-        if type(features1) is tuple:
+        if isinstance(features1, tuple):
             features1, features2 = features1[0], features2[0]
 
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=1))
@@ -404,15 +422,15 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
         means_left, stds_left = features1
         means_right, stds_right = features2
 
-        if scalable:
+        if chunk_size:
 
             similarities = np.zeros((means_left.shape[0], means_right.shape[0]))
-            for i in range(0, means_left.shape[0], 512):
-                eps_left = np.random.randn(k, min(i + 512, means_left.shape[0]) - i, means_left.shape[1])
+            for i in range(0, means_left.shape[0], chunk_size):
+                eps_left = np.random.randn(k, min(i + chunk_size, means_left.shape[0]) - i, means_left.shape[1])
                 eps_right = np.random.randn(k, means_right.shape[0], means_right.shape[1])
-                similarities[i:i + 512, :] = np.mean(np.exp(
+                similarities[i:i + chunk_size, :] = np.mean(np.exp(
                     -torch.cdist(
-                        torch.from_numpy(means_left[i:i + 512, :] + stds_left[i:i + 512, :]*eps_left),
+                        torch.from_numpy(means_left[i:i + chunk_size, :] + stds_left[i:i + chunk_size, :]*eps_left),
                         torch.from_numpy(means_right + stds_right*eps_right)
                      ).numpy()**2
                 ), axis=0)
@@ -426,6 +444,34 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", scalabl
                 -torch.cdist(torch.from_numpy(means_left + stds_left*eps_left), torch.from_numpy(means_right + stds_right*eps_right)).numpy()**2
             ), axis=0)
 
+    elif metric == "vib_without_sampling":
+
+        means_left, vars_left = features1[0], features1[0] ** 2
+        means_right, vars_right = features2[0], features2[0] ** 2
+
+        if chunk_size:
+
+            similarities = np.zeros((means_left.shape[0], means_right.shape[0]))
+            for i in range(0, means_left.shape[0], chunk_size):
+                # Compute the terms log(1+2(s_i^2 + s_j^2))
+                log1p_cov = np.log1p(2 * (vars_left[i:i + chunk_size, :] + vars_right))
+                # Compute the term m_i - m_j
+                mean_squared_diff = (means_left[i:i + chunk_size, :] - means_right) ** 2
+                # Compute the log expectation
+                log_expectation = -0.5 * log1p_cov.sum(axis=1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=1)
+                # Compute the similarity
+                similarities[i:i + chunk_size, :] = log_expectation #np.exp(log_expectation)
+
+        else:
+
+            # Compute the terms log(1+2(s_i^2 + s_j^2))
+            log1p_cov = np.log1p(2 * (vars_left + vars_right))
+            # Compute the term m_i - m_j
+            mean_squared_diff = (means_left - means_right) ** 2
+            # Compute the log expectation
+            log_expectation = -0.5 * log1p_cov.sum(axis=1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=1)
+            # Compute the similarity
+            similarities = log_expectation #np.exp(log_expectation)
 
     else:
         raise ValueError("Invalid metric!")
