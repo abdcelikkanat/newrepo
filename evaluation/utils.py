@@ -370,6 +370,9 @@ def align_labels_via_hungarian_algorithm(true_labels, predicted_labels):
     Returns:
     dict: A dictionary mapping the predicted labels to the aligned true labels.
     """
+    true_labels, predicted_labels = np.array(true_labels, dtype=int), np.array(predicted_labels, dtype=int)
+    print("burada", true_labels.shape, predicted_labels.shape, "---", true_labels[:5], predicted_labels[:5])
+
     # Create a confusion matrix
     max_label = max(max(true_labels), max(predicted_labels)) + 1
     confusion_matrix = np.zeros((max_label, max_label), dtype=int)
