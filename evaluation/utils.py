@@ -191,19 +191,23 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
 
     # Compute the similarities between the features
     similarities = compute_similarity_matrix(features, metric=metric, chunk_size=chunk_size)
-    base_point = 1
+
+    # Normalization might be important if similarities include negative values
+    small_number = similarities.min()
+    similarities = similarities - small_number
+    min_similarity = min_similarity - small_number
 
     # Set the values below min_similarity to 0
     similarities[similarities < min_similarity] = 0
 
     if isinstance(features, tuple):
-        p = -base_point * np.ones(len(features[0]), dtype=float)
+        p = -np.ones(len(features[0]), dtype=float)
     else:
-        p = -base_point * np.ones(len(features), dtype=float)
+        p = -np.ones(len(features), dtype=float)
 
     row_sum = np.sum(similarities, axis=1)
     iter_count = 1
-    while np.any(p == -base_point):
+    while np.any(p == -1):
 
         if iter_count == max_iter:
             break
@@ -223,11 +227,12 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
             similarity = compute_similarity_matrix(
                 features1=features, features2=features2, metric=metric, chunk_size=chunk_size
             ).squeeze()
+            similarity = similarity - small_number
 
             # Determine the indices that are within the similarity threshold
             idx_within = similarity >= min_similarity
             # Determine the available indices, i.e. the indices that have not been assigned to a cluster yet
-            idx_available = (p == -base_point)
+            idx_available = (p == -1)
             # Get the indices that are both within the similarity threshold and available
             selected_idx = np.where(np.logical_and(idx_within, idx_available))[0]
             # Determine the new k-medoid
@@ -251,7 +256,7 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
     unique, counts = np.unique(p, return_counts=True)
     for label, count in zip(unique, counts):
         if count < min_bin_size:
-            p[p == label] = -base_point
+            p[p == label] = -1
 
     return p
 
@@ -371,7 +376,6 @@ def align_labels_via_hungarian_algorithm(true_labels, predicted_labels):
     dict: A dictionary mapping the predicted labels to the aligned true labels.
     """
     true_labels, predicted_labels = np.array(true_labels, dtype=int), np.array(predicted_labels, dtype=int)
-    print("burada", true_labels.shape, predicted_labels.shape, "---", true_labels[:5], predicted_labels[:5])
 
     # Create a confusion matrix
     max_label = max(max(true_labels), max(predicted_labels)) + 1
@@ -452,8 +456,8 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
 
     elif metric == "vib_without_sampling":
 
-        means_left, vars_left = features1[0], features1[0] ** 2
-        means_right, vars_right = features2[0], features2[0] ** 2
+        means_left, vars_left = features1[0], features1[1] ** 2
+        means_right, vars_right = features2[0], features2[1] ** 2
 
         if chunk_size:
 
