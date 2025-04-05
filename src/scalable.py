@@ -1,25 +1,17 @@
-import torch
-import math
+import os
 import time
-import sys
+import torch
 import random
-import pickle as pkl
+import argparse
 import itertools
 import numpy as np
-from sklearn.metrics import roc_auc_score, average_precision_score
-import matplotlib.pyplot as plt
-from functools import partial
-import argparse
-from torch import device
-from torch.utils.tensorboard import SummaryWriter
-from datetime import datetime
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel
-import re
-import os
-import csv
 import pandas as pd
+from torch import device
+from functools import partial
+from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import Dataset, DataLoader
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data.distributed import DistributedSampler
 
 # Helper functions
 def set_seed(seed: int):
@@ -308,16 +300,27 @@ def loss_func(
         Computation of the E_p(z_i|r_i)p(z_j|r_j)[p(y_ij|z_i,z_j)] without applying any sampling
         """
 
-        var_left, var_right = left_std**2, right_std**2
-        ''' '''
-        # Compute the terms log(1+2(s_i^2 + s_j^2))
-        log1p_cov = torch.log1p(2*(var_left + var_right))
-        # Compute the term m_i - m_j
-        mean_squared_diff = (left_mean - right_mean)**2
-        # Compute the log expectation
-        log_expectation = -0.5*log1p_cov.sum(dim=1) - (mean_squared_diff / torch.exp(log1p_cov)).sum(dim=1)
-        # Compute the logits
-        logits = log_expectation - log1mexp(-log_expectation)
+        if include_std:
+
+            # Define the coefficient
+            coefficient = 1./ left_std.shape[1]
+            # Compute the variances
+            var_left, var_right = left_std**2, right_std**2
+            # Compute the terms log(1+2(s_i^2 + s_j^2))
+            log1p_cov = torch.log1p(2*coefficient*(var_left + var_right))
+            # Compute the term m_i - m_j
+            mean_squared_diff = (left_mean - right_mean)**2
+            # Compute the log expectation
+            log_expectation = -0.5*log1p_cov.sum(dim=1) - (mean_squared_diff / (coefficient*torch.exp(log1p_cov))).sum(dim=1)
+            # Compute the logits
+            logits = log_expectation - log1mexp(-log_expectation)
+
+        else:
+
+            # Compute the log expectation
+            log_expectation = (-(left_mean - right_mean) ** 2).sum(dim=1)
+            # Compute the logits
+            logits = log_expectation - log1mexp(-log_expectation)
 
         return torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='mean')
 
@@ -365,25 +368,67 @@ def train_single_epoch(device, model, criterion, optimizer, data_loader):
 
     return average_epoch_loss
 
-def train(device, distributed, model, criterion, optimizer, data_loader, epoch_num: int, save_every:int, output_path):
+def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path, summary_writer):
 
+    ### Define the optimizer
+    # At the beginning, we will not train the standard deviation parameters so we will not include them in the optimizer
+    include_std = False
+    model_params = []
+    for name, param in model.named_parameters():
+        if 'std' in name:
+            param.requires_grad = False
+        else:
+            model_params.append(param)
+    ### Define the loss function.
+    # Since we won't train the std weights at the beginning, we will not include them in the loss function
+    criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
+    # Define the optimizer
+    optimizer = torch.optim.Adam(model_params, lr=lr)
+
+    ### Start training
+    print(f"+ Training started.")
     # Switch the model to training mode
     model.train()
-
-    ## Start training
-    print(f"+ Training started.")
     for current_epoch in range(epoch_num):
 
         # Set the epoch for the sampler
         if distributed:
             data_loader.sampler.set_epoch(current_epoch)
 
+
+        # For the second half of the training, we will also train the std weights
+        if current_epoch >= epoch_num // 2 and include_std == False:
+
+            # Set the gradient of the std weights to True
+            std_params = []
+            for name, param in model.named_parameters():
+                param.requires_grad = False
+                if 'std' in name:
+                    param.requires_grad = True
+                    std_params.append(param)
+            # Set the include_std to True
+            include_std = True
+            # Define the optimizer
+            optimizer = torch.optim.Adam(std_params, lr=lr)
+            # Define the loss function
+            criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
+
+
         ## Run the training for the current epoch
         init_time = time.time()
         loss = train_single_epoch(
             device=device, model=model, criterion=criterion, optimizer=optimizer, data_loader=data_loader
         )
-        print(f"\t- Epoch: {current_epoch}/{epoch_num} - Loss: {loss} ({time.time() - init_time:.2f} secs)")
+        loss_time = time.time() - init_time
+        if distributed:
+            if device == 0:
+                summary_writer.add_scalar('Loss/train', loss, current_epoch)
+                summary_writer.add_scalar('Time/epoch', loss_time, current_epoch)
+                print(f"\t- Epoch: {current_epoch}/{epoch_num} - Loss: {loss} ({loss_time:.2f} secs)")
+        else:
+            summary_writer.add_scalar('Loss/train', loss, current_epoch)
+            summary_writer.add_scalar('Time/epoch', loss_time, current_epoch)
+            print(f"\t- Epoch: {current_epoch}/{epoch_num} - Loss: {loss} ({loss_time:.2f} secs)")
 
         ## Save the checkpoint if necessary
         if save_every > 0 and (current_epoch + 1) % save_every == 0:
@@ -411,7 +456,7 @@ def train(device, distributed, model, criterion, optimizer, data_loader, epoch_n
 def main_worker(
         device, world_size, distributed:bool, input_file_path: str, output_path: str, neg_sample_per_pos: int,
         max_seq_num: int, k: int, out_dim: int, lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int,
-        loss_name: str, seed: int, verbose:bool=True
+        loss_name: str, log_dir:str, seed: int,
 ):
     ### Initialize the device
     if distributed:
@@ -439,22 +484,25 @@ def main_worker(
     model = VIBModel(k=k, out_dim=out_dim, seed=seed)
     if distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = DistributedDataParallel(model.to(f"cuda:{device}"), device_ids=[device])
+        model = DistributedDataParallel(model.to(f"cuda:{device}"), device_ids=[device], find_unused_parameters=True)
     else:
         model.to(device)
 
-    ### Define the optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    ### Define the loss function
-    criterion = partial(loss_func, loss_name=loss_name, include_std=False)
+    ### Define the log writer
+    summary_writer = None
+    if log_dir != "":
+        summary_writer = SummaryWriter(log_dir=log_dir)
 
     ### Train the model
     train(
-        device=device, distributed=distributed, model=model, criterion=criterion, optimizer=optimizer,
-        data_loader=training_loader, epoch_num=epoch_num, save_every=save_every, output_path=output_path
+        device=device, distributed=distributed, model=model, lr=lr, loss_name=loss_name, data_loader=training_loader,
+        epoch_num=epoch_num, save_every=save_every, output_path=output_path, summary_writer=summary_writer
     )
 
+    # Close the summary writer
+    summary_writer.close()
+
+    # Terminate the processes
     if distributed:
         # Wait for all processes to complete
         torch.distributed.barrier()
@@ -477,7 +525,8 @@ if __name__ == "__main__":
     parser.add_argument('--distributed', type=int, default=1)
     parser.add_argument('--device', type=str, default='cpu', help='Device to use (cpu, mps or gpu)')
     parser.add_argument('--workers', type=int, default=2, help='Number of data loading workers')
-    parser.add_argument('--loss_name', type=str, default="vib", help='Loss function (bern, vib, non_stable_vib and vib_without_sampling)')
+    parser.add_argument('--loss_name', type=str, default="vib_without_sampling", help='Loss function (bern, vib, non_stable_vib and vib_without_sampling)')
+    parser.add_argument('--log_dir', type=str, default="", help='Path directory to save the log file')
     parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
     args = parser.parse_args()
 
@@ -508,9 +557,9 @@ if __name__ == "__main__":
     print(f"\t- Batch size: {args.batch_size}")
 
     arguments = (
-        world_size, args.distributed, args.input, args.output_path, args.neg_sample_per_pos, args.max_seq_num, args.k,
-        args.out_dim, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,  args.seed,
-        True
+        world_size, args.distributed, args.input, args.output_path, args.neg_sample_per_pos, args.max_seq_num,
+        args.k, args.out_dim, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,
+        args.log_dir, args.seed,
     )
     if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
