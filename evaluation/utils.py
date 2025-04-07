@@ -472,7 +472,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
                 # Compute the term m_i - m_j
                 mean_squared_diff = (means_left[i:i + chunk_size, :][:, np.newaxis] - means_right) ** 2
                 # Compute the log expectation
-                log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / (coefficient * np.exp(log1p_cov))).sum(axis=-1)
+                log_expectation = -0.5 * log1p_cov.sum(axis=-1) - ((coefficient * mean_squared_diff) / np.exp(log1p_cov)).sum(axis=-1)
                 # Compute the similarity
                 similarities[i:i + chunk_size, :] = log_expectation - log1mexp(-log_expectation)  #log_expectation #np.exp(log_expectation)
 
@@ -483,7 +483,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
             # Compute the term m_i - m_j
             mean_squared_diff = (means_left[:, np.newaxis] - means_right) ** 2
             # Compute the log expectation
-            log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / (coefficient * np.exp(log1p_cov))).sum(axis=-1)
+            log_expectation = -0.5 * log1p_cov.sum(axis=-1) - ((coefficient * mean_squared_diff) / np.exp(log1p_cov)).sum(axis=-1)
             # Compute the similarity
             similarities = log_expectation - log1mexp(-log_expectation) #log_expectation #np.exp(log_expectation)
 
