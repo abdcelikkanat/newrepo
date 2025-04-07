@@ -311,7 +311,7 @@ def loss_func(
             # Compute the term m_i - m_j
             mean_squared_diff = (left_mean - right_mean)**2
             # Compute the log expectation
-            log_expectation = -0.5*log1p_cov.sum(dim=1) - (mean_squared_diff / (coefficient*torch.exp(log1p_cov))).sum(dim=1)
+            log_expectation = -0.5*log1p_cov.sum(dim=1) - ((coefficient*mean_squared_diff) / torch.exp(log1p_cov)).sum(dim=1)
             # Compute the logits
             logits = log_expectation - log1mexp(-log_expectation)
 
