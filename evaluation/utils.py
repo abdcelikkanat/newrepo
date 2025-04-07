@@ -21,6 +21,9 @@ from scipy.optimize import linear_sum_assignment
 #     "tnf": 100, "tnf_k": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
 # }
 
+def log1mexp(x):
+    log2 = np.log(2)
+    return np.where(x < log2, np.log(-np.expm1(-x)), np.log1p(-np.exp(-x)) )
 
 def get_embedding(
         dna_sequences, model_name, species, sample_id, k=4, model_path=None, embedding_file_path = None,
@@ -458,30 +461,31 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
 
         means_left, vars_left = features1[0], features1[1] ** 2
         means_right, vars_right = features2[0], features2[1] ** 2
+        coefficient = 1. / means_left.shape[1]
 
         if chunk_size:
 
             similarities = np.zeros((means_left.shape[0], means_right.shape[0]))
             for i in range(0, means_left.shape[0], chunk_size):
                 # Compute the terms log(1+2(s_i^2 + s_j^2))
-                log1p_cov = np.log1p(2 * (vars_left[i:i + chunk_size, :][:, np.newaxis] + vars_right))
+                log1p_cov = np.log1p(2 * coefficient * (vars_left[i:i + chunk_size, :][:, np.newaxis] + vars_right))
                 # Compute the term m_i - m_j
                 mean_squared_diff = (means_left[i:i + chunk_size, :][:, np.newaxis] - means_right) ** 2
                 # Compute the log expectation
-                log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=-1)
+                log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / (coefficient * np.exp(log1p_cov))).sum(axis=-1)
                 # Compute the similarity
-                similarities[i:i + chunk_size, :] = np.exp(log_expectation) #log_expectation #np.exp(log_expectation)
+                similarities[i:i + chunk_size, :] = log_expectation - log1mexp(-log_expectation)  #log_expectation #np.exp(log_expectation)
 
         else:
 
             # Compute the terms log(1+2(s_i^2 + s_j^2))
-            log1p_cov = np.log1p(2 * (vars_left[:, np.newaxis] + vars_right))
+            log1p_cov = np.log1p(2 * coefficient * (vars_left[:, np.newaxis] + vars_right))
             # Compute the term m_i - m_j
             mean_squared_diff = (means_left[:, np.newaxis] - means_right) ** 2
             # Compute the log expectation
-            log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / np.exp(log1p_cov)).sum(axis=-1)
+            log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / (coefficient * np.exp(log1p_cov))).sum(axis=-1)
             # Compute the similarity
-            similarities = np.exp(log_expectation) #log_expectation #np.exp(log_expectation)
+            similarities = log_expectation - log1mexp(-log_expectation) #log_expectation #np.exp(log_expectation)
 
     else:
         raise ValueError("Invalid metric!")
