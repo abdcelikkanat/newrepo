@@ -244,7 +244,7 @@ class VIBModel(torch.nn.Module):
 
 def loss_func(
         left_mean: torch.Tensor, left_std: torch.Tensor, right_mean: torch.Tensor, right_std: torch.Tensor,
-        labels: torch.Tensor, loss_name:str = "vib", include_std:bool = True, samples_num = 8
+        labels: torch.Tensor, loss_name:str = "vib", include_std:bool = True, samples_num = 8, beta=1e-4
 ):
     """
     Definition of the loss functions
@@ -294,6 +294,29 @@ def loss_func(
         p = torch.mean(torch.exp(-torch.sum((z_left - z_right) ** 2, dim=-1)), dim=0, keepdim=False)
 
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
+
+    elif loss_name == "bottle":
+            epsilon_left = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
+            epsilon_right = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
+            z_left = left_mean + left_std * epsilon_left  # shape (samples, batch, d)
+            z_right = right_mean + right_std * epsilon_right  # shape (samples, batch, d)
+
+            # The loglikelihood term
+            distance = torch.sum((z_left - z_right) ** 2, dim=2)  # sh
+            # Define logits, log(p / (1-p))
+            logits = -distance - log1mexp(distance)
+            labels_expand = labels.unsqueeze(0).expand(samples_num, -1)
+            log_loss = torch.nn.functional.binary_cross_entropy_with_logits(logits, labels_expand, reduction='none')
+            log_loss = torch.mean(log_loss, dim=0) 
+
+            # The KL divergence term
+            kl_left = 0.5*((left_mean**2).sum(dim=1) + torch.sum(left_std**2, dim =-1, keepdim=False) - z_left.shape[-1] - torch.sum(torch.log(left_std**2), dim=-1, keepdim=False))
+            kl_right = 0.5*((right_mean**2).sum(dim=1) + torch.sum(right_std**2, dim =-1, keepdim=False) - z_right.shape[-1] - torch.sum(torch.log(right_std**2), dim=-1, keepdim=False)) 
+            kl = kl_left + kl_right
+            
+            # The total loss
+            loss = torch.mean(log_loss + beta * kl)
+            return loss
 
     elif loss_name == "vib_without_sampling":
         """
