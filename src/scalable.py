@@ -391,7 +391,7 @@ def train_single_epoch(device, model, criterion, optimizer, data_loader):
 
     return average_epoch_loss
 
-def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path, summary_writer):
+def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path, summary_writer, beta=1e-4):
 
     ### Define the optimizer
     # At the beginning, we will not train the standard deviation parameters so we will not include them in the optimizer
@@ -404,7 +404,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             model_params.append(param)
     ### Define the loss function.
     # Since we won't train the std weights at the beginning, we will not include them in the loss function
-    criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
+    criterion = partial(loss_func, loss_name=loss_name, include_std=include_std, beta=beta)
     # Define the optimizer
     optimizer = torch.optim.Adam(model_params, lr=lr)
 
@@ -479,7 +479,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
 def main_worker(
         device, world_size, distributed:bool, input_file_path: str, output_path: str, neg_sample_per_pos: int,
         max_seq_num: int, k: int, out_dim: int, lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int,
-        loss_name: str, log_dir:str, seed: int,
+        loss_name: str, log_dir:str, seed: int, beta:float=1e-4
 ):
     ### Initialize the device
     if distributed:
@@ -519,7 +519,7 @@ def main_worker(
     ### Train the model
     train(
         device=device, distributed=distributed, model=model, lr=lr, loss_name=loss_name, data_loader=training_loader,
-        epoch_num=epoch_num, save_every=save_every, output_path=output_path, summary_writer=summary_writer
+        epoch_num=epoch_num, save_every=save_every, output_path=output_path, summary_writer=summary_writer, beta=beta
     )
 
     # Close the summary writer
@@ -551,6 +551,7 @@ if __name__ == "__main__":
     parser.add_argument('--loss_name', type=str, default="vib_without_sampling", help='Loss function (bern, vib, non_stable_vib and vib_without_sampling)')
     parser.add_argument('--log_dir', type=str, default="", help='Path directory to save the log file')
     parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
+    parser.add_argument('--beta', type=float, default=1e-4, help='Beta value for the variational information bottleneck')
     args = parser.parse_args()
 
     # Define the world size, i.e. total number of processes participating in the distributed training job
@@ -578,11 +579,11 @@ if __name__ == "__main__":
         print(f"\t- Device: {device}")
     print(f"\t- Loss function: {args.loss_name}")
     print(f"\t- Batch size: {args.batch_size}")
-
+    print(f"\t- Beta: {args.beta}")
     arguments = (
         world_size, args.distributed, args.input, args.output_path, args.neg_sample_per_pos, args.max_seq_num,
         args.k, args.out_dim, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,
-        args.log_dir, args.seed,
+        args.log_dir, args.seed, args.beta
     )
     if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
