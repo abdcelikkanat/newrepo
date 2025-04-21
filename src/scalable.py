@@ -412,6 +412,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
     print(f"+ Training started.")
     # Switch the model to training mode
     model.train()
+    old_loss = torch.tensor(float('inf'))
     for current_epoch in range(epoch_num):
 
         # Set the epoch for the sampler
@@ -462,6 +463,11 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
                     model.module.save(checkpoint_path)
             else:
                 model.save(checkpoint_path)
+
+        if abs(old_loss- loss)/old_loss < 1e-5:
+            print(f"\t- Early stopping at epoch {current_epoch} with loss {loss}")
+            break
+        old_loss = loss
 
         # # To ensure that all processes have finished the current epoch
         # if distributed:
