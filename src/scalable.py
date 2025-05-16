@@ -174,6 +174,8 @@ class VIBModel(torch.nn.Module):
         self.linear2_mean = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
         self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
 
+
+
     def encoder(self, kmers: torch.Tensor):
         """
         For given kmers, return the mean and std
@@ -252,6 +254,9 @@ def loss_func(
 
     if loss_name == "bern":
 
+        left_mean = left_mean + left_std * 0
+        right_mean = right_mean + right_std * 0
+
         p = torch.exp(-torch.norm(left_mean - right_mean, dim=1)**2)
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
@@ -296,8 +301,13 @@ def loss_func(
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
     elif loss_name == "bottle":
+
             epsilon_left = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
             epsilon_right = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
+
+            if not include_std:
+                left_std, right_std = torch.zeros_like(left_std), torch.zeros_like(right_std)
+
             z_left = left_mean + left_std * epsilon_left  # shape (samples, batch, d)
             z_right = right_mean + right_std * epsilon_right  # shape (samples, batch, d)
 
@@ -315,7 +325,10 @@ def loss_func(
             kl = kl_left + kl_right
             
             # The total loss
-            loss = torch.mean(log_loss + beta * kl)
+            if include_std:
+                loss = torch.mean(log_loss + beta * kl)
+            else:
+                loss = torch.mean(log_loss)
             return loss
 
     elif loss_name == "vib_without_sampling":
