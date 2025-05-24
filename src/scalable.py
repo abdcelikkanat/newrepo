@@ -167,25 +167,39 @@ class VIBModel(torch.nn.Module):
         set_seed(seed)
 
         # Define the layers
-        self.linear1_common = torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float)
-        self.batch1_common = torch.nn.BatchNorm1d(512, dtype=torch.float)
-        self.activation1_common = torch.nn.Sigmoid()
-        self.dropout1_common = torch.nn.Dropout(0.2)
+        self.linear1_mean = torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float)
+        self.batch1_mean = torch.nn.BatchNorm1d(512, dtype=torch.float)
+        self.activation1_mean = torch.nn.Sigmoid()
+        self.dropout1_mean = torch.nn.Dropout(0.2)
         self.linear2_mean = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
+
+        self.linear1_std = torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float)
+        self.batch1_std = torch.nn.BatchNorm1d(512, dtype=torch.float)
+        self.activation1_std = torch.nn.Sigmoid()
+        self.dropout1_std = torch.nn.Dropout(0.2)
         self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
 
+        # Init the std weights of the last layer
+        torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
+        # torch.nn.init.zeros_(self.linear2_std.weight)
+        torch.nn.init.zeros_(self.linear2_std.bias)
 
 
     def encoder(self, kmers: torch.Tensor):
         """
         For given kmers, return the mean and std
         """
-        h = self.linear1_common(kmers)
-        h = self.batch1_common(h)
-        h = self.activation1_common(h)
-        h = self.dropout1_common(h)
+        h = self.linear1_mean(kmers)
+        h = self.batch1_mean(h)
+        h = self.activation1_mean(h)
+        h = self.dropout1_mean(h)
         mean = self.linear2_mean(h)
-        std = torch.nn.functional.softplus(self.linear2_std(h)) + 1e-6
+
+        h = self.linear1_std(kmers)
+        h = self.batch1_std(h)
+        h = self.activation1_std(h)
+        h = self.dropout1_std(h)
+        std = torch.exp(self.linear2_std(h))
 
         return mean, std
 
@@ -246,7 +260,7 @@ class VIBModel(torch.nn.Module):
 
 def loss_func(
         left_mean: torch.Tensor, left_std: torch.Tensor, right_mean: torch.Tensor, right_std: torch.Tensor,
-        labels: torch.Tensor, loss_name:str = "vib", include_std:bool = True, samples_num = 8, beta=1e-4
+        labels: torch.Tensor, loss_name:str = "vib", include_std:bool = True, samples_num = 8, alpha=1., beta=1e-4,
 ):
     """
     Definition of the loss functions
@@ -331,34 +345,47 @@ def loss_func(
                 loss = torch.mean(log_loss)
             return loss
 
-    elif loss_name == "vib_without_sampling":
-        """
-        Computation of the E_p(z_i|r_i)p(z_j|r_j)[p(y_ij|z_i,z_j)] without applying any sampling
-        """
+
+    elif loss_name == "map":
+
+        # Define the coefficient
+        coeff = 1.
+        # Compute the term (m_i - m_j)^2
+        mean_squared_diff = (left_mean - right_mean)**2
 
         if include_std:
 
-            # Define the coefficient
-            coefficient = 1./ left_std.shape[1]
             # Compute the variances
             var_left, var_right = left_std**2, right_std**2
             # Compute the terms log(1+2(s_i^2 + s_j^2))
-            log1p_cov = torch.log1p(2*coefficient*(var_left + var_right))
-            # Compute the term m_i - m_j
-            mean_squared_diff = (left_mean - right_mean)**2
+            log1p_cov = torch.log1p(2 * coeff * (var_left + var_right))
             # Compute the log expectation
-            log_expectation = -0.5*log1p_cov.sum(dim=1) - ((coefficient*mean_squared_diff) / torch.exp(log1p_cov)).sum(dim=1)
+            log_expectation = -0.5*log1p_cov.sum(dim=1) - ((coeff*mean_squared_diff)/torch.exp(log1p_cov)).sum(dim=1)
             # Compute the logits
             logits = log_expectation - log1mexp(-log_expectation)
+
+            # Compute the inverse gamma prior, regularization term
+            inv_gamma_prior = torch.mean(
+                beta*((1./var_left) + (1./var_right)) + (alpha+1)*(torch.log(var_left)+torch.log(var_right)),
+                dim=1, keepdim=False
+            )
+
+            return torch.mean(
+                torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none') + inv_gamma_prior,
+                dim=0, keepdim=False
+            )
 
         else:
 
             # Compute the log expectation
-            log_expectation = (-(left_mean - right_mean) ** 2).sum(dim=1)
+            log_expectation = -coeff * mean_squared_diff.sum(dim=1)
             # Compute the logits
             logits = log_expectation - log1mexp(-log_expectation)
 
-        return torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='mean')
+            return torch.mean(
+                torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
+                dim=0, keepdim=False
+            )
 
     else:
         raise ValueError(f"Unknown loss function name: {loss_name}")
@@ -404,7 +431,7 @@ def train_single_epoch(device, model, criterion, optimizer, data_loader):
 
     return average_epoch_loss
 
-def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path, summary_writer, beta=1e-4):
+def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path, summary_writer, alpha=1., beta=1e-4):
 
     ### Define the optimizer
     # At the beginning, we will not train the standard deviation parameters so we will not include them in the optimizer
@@ -417,7 +444,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             model_params.append(param)
     ### Define the loss function.
     # Since we won't train the std weights at the beginning, we will not include them in the loss function
-    criterion = partial(loss_func, loss_name=loss_name, include_std=include_std, beta=beta)
+    criterion = partial(loss_func, loss_name=loss_name, include_std=include_std, alpha=alpha, beta=beta)
     # Define the optimizer
     optimizer = torch.optim.Adam(model_params, lr=lr)
 
@@ -448,7 +475,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             # Define the optimizer
             optimizer = torch.optim.Adam(std_params, lr=lr)
             # Define the loss function
-            criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
+            criterion = partial(loss_func, loss_name=loss_name, include_std=include_std, alpha=alpha, beta=beta)
 
 
         ## Run the training for the current epoch
@@ -498,7 +525,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
 def main_worker(
         device, world_size, distributed:bool, input_file_path: str, output_path: str, neg_sample_per_pos: int,
         max_seq_num: int, k: int, out_dim: int, lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int,
-        loss_name: str, log_dir:str, seed: int, beta:float=1e-4
+        loss_name: str, log_dir:str, seed: int, alpha:float=1., beta:float=1e-4
 ):
     ### Initialize the device
     if distributed:
@@ -538,7 +565,8 @@ def main_worker(
     ### Train the model
     train(
         device=device, distributed=distributed, model=model, lr=lr, loss_name=loss_name, data_loader=training_loader,
-        epoch_num=epoch_num, save_every=save_every, output_path=output_path, summary_writer=summary_writer, beta=beta
+        epoch_num=epoch_num, save_every=save_every, output_path=output_path, summary_writer=summary_writer,
+        alpha=alpha, beta=beta
     )
 
     # Close the summary writer
@@ -571,6 +599,8 @@ if __name__ == "__main__":
     parser.add_argument('--log_dir', type=str, default="", help='Path directory to save the log file')
     parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
     parser.add_argument('--beta', type=float, default=1e-4, help='Beta value for the variational information bottleneck')
+    parser.add_argument('--alpha', type=float, default=1., help='Alpha value for the MAP loss function')
+
     args = parser.parse_args()
 
     # Define the world size, i.e. total number of processes participating in the distributed training job
@@ -598,11 +628,12 @@ if __name__ == "__main__":
         print(f"\t- Device: {device}")
     print(f"\t- Loss function: {args.loss_name}")
     print(f"\t- Batch size: {args.batch_size}")
+    print(f"\t- Alpha: {args.alpha}")
     print(f"\t- Beta: {args.beta}")
     arguments = (
         world_size, args.distributed, args.input, args.output_path, args.neg_sample_per_pos, args.max_seq_num,
         args.k, args.out_dim, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,
-        args.log_dir, args.seed, args.beta
+        args.log_dir, args.seed, args.alpha, args.beta
     )
     if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
