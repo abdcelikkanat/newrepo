@@ -387,6 +387,42 @@ def loss_func(
                 dim=0, keepdim=False
             )
 
+    elif loss_name == "mahalanobis":
+
+        # Compute the variances
+        var_left, var_right = left_std ** 2, right_std ** 2
+
+        # Define the coefficient
+        coeff = 1.
+        # Compute the term (m_i - m_j)^2
+        mean_squared_diff = (left_mean - right_mean)**2 * ((1. / var_left) + (1. / var_right))
+
+        if include_std:
+
+            # Compute the terms log(1+2(s_i^2 + s_j^2))
+            log1p_cov = torch.log1p(2 * coeff * (var_left + var_right))
+            # Compute the log expectation
+            log_expectation = -0.5*log1p_cov.sum(dim=1) - ((coeff*mean_squared_diff)/torch.exp(log1p_cov)).sum(dim=1)
+            # Compute the logits
+            logits = log_expectation - log1mexp(-log_expectation)
+
+            return torch.mean(
+                torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
+                dim=0, keepdim=False
+            )
+
+        else:
+
+            # Compute the log expectation
+            log_expectation = -coeff * mean_squared_diff.sum(dim=1)
+            # Compute the logits
+            logits = log_expectation - log1mexp(-log_expectation)
+
+            return torch.mean(
+                torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
+                dim=0, keepdim=False
+            )
+
     else:
         raise ValueError(f"Unknown loss function name: {loss_name}")
 
