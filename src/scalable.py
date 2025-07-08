@@ -179,10 +179,10 @@ class VIBModel(torch.nn.Module):
         self.dropout1_std = torch.nn.Dropout(0.2)
         self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
 
-        # Init the std weights of the last layer
-        torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
-        # torch.nn.init.zeros_(self.linear2_std.weight)
-        torch.nn.init.zeros_(self.linear2_std.bias)
+        # # Init the std weights of the last layer
+        # torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
+        # # torch.nn.init.zeros_(self.linear2_std.weight)
+        # torch.nn.init.zeros_(self.linear2_std.bias)
 
 
     def encoder(self, kmers: torch.Tensor):
@@ -392,17 +392,13 @@ def loss_func(
         # Compute the variances
         var_left, var_right = left_std ** 2, right_std ** 2
 
-        # Define the coefficient
-        coeff = 1.
         # Compute the term (m_i - m_j)^2
-        mean_squared_diff = (left_mean - right_mean)**2 * ((1. / var_left) + (1. / var_right))
+        mean_squared_diff = (left_mean - right_mean)**2 * (0.5 / (var_left + var_right))
 
         if include_std:
 
-            # Compute the terms log(1+2(s_i^2 + s_j^2))
-            log1p_cov = torch.log1p(2 * coeff * (var_left + var_right))
             # Compute the log expectation
-            log_expectation = -0.5*log1p_cov.sum(dim=1) - ((coeff*mean_squared_diff)/torch.exp(log1p_cov)).sum(dim=1)
+            log_expectation = -0.5*(mean_squared_diff).sum(dim=1)
             # Compute the logits
             logits = log_expectation - log1mexp(-log_expectation)
 
@@ -414,7 +410,7 @@ def loss_func(
         else:
 
             # Compute the log expectation
-            log_expectation = -coeff * mean_squared_diff.sum(dim=1)
+            log_expectation = -mean_squared_diff.sum(dim=1)
             # Compute the logits
             logits = log_expectation - log1mexp(-log_expectation)
 
@@ -422,6 +418,24 @@ def loss_func(
                 torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
                 dim=0, keepdim=False
             )
+
+    elif loss_name == "mahalanobis2":
+
+        # Compute the variances
+        var_left, var_right = left_std ** 2, right_std ** 2
+
+        # Compute the term (m_i - m_j)^2
+        mean_squared_diff = (left_mean - right_mean) ** 2 * ((1. / var_left) + (1. / var_right))
+
+        # Compute the log expectation
+        log_expectation = -mean_squared_diff.sum(dim=1)
+        # Compute the logits
+        logits = log_expectation - log1mexp(-log_expectation)
+
+        return torch.mean(
+            torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
+            dim=0, keepdim=False
+        )
 
     else:
         raise ValueError(f"Unknown loss function name: {loss_name}")
