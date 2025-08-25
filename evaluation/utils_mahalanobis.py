@@ -70,7 +70,7 @@ def filter_sequences(data_path, model_path, shorten, min_len=0, abundance=0, fil
         _, stds = vib.seq2emb(dna_sequences)
 
         # Get the sorted indices of the stds
-        sorted_idx = np.argsort(np.log(stds).mean(axis=1))
+        sorted_idx = np.argsort(np.log(stds+1).mean(axis=1))
         selected_idx = sorted_idx[:int((1-filter_ratio) * len(stds))]
         print(f"We had {len(sorted_idx)} sequences and {len(selected_idx)} remained!")
         dna_sequences = [dna_sequences[i] for i in selected_idx]
