@@ -18,6 +18,7 @@ csv.field_size_limit(sys.maxsize)
 MAX_SEQ_LEN = 20000
 MIN_SEQ_LEN = 2500
 MIN_ABUNDANCE_VALUE = 10
+FILTER_RATIO = 0.05
 
 
 def main(args):
@@ -53,11 +54,10 @@ def main(args):
                 # labels = np.array([label2id[l] for l in labels])
                 # num_clusters = len(label2id)
                 # print(f"\t- Clustering data contains {len(dna_sequences)} sequences with {num_clusters} clusters.")
-                keep_ratio = 0.95
-                min_max_normalization = True
+
                 dna_sequences, labels = filter_sequences(
                     data_path=clustering_data_file_path, model_path=args.model_path,
-                    keep_ratio=keep_ratio, min_max_normalization=min_max_normalization
+                    shorten=MAX_SEQ_LEN, min_len = 0, abundance = 0, filter_ratio = 0, metric = None
                 )
 
                 # # Define the embedding/feature file path. If file exist, we don't need to recompute the dna embeddings
@@ -113,7 +113,11 @@ def main(args):
                 # num_clusters = len(label2id)
                 # print(f"\t- Get {len(dna_sequences)} sequences, {num_clusters} clusters")
                 dna_sequences, labels_bin = filter_sequences(
-                    data_path=data_file, model_path=args.model_path, keep_ratio=keep_ratio, min_max_normalization=min_max_normalization
+                    data_path=data_file, model_path=args.model_path,
+                    shorten=MAX_SEQ_LEN, min_len=MIN_SEQ_LEN, abundance=MIN_ABUNDANCE_VALUE,
+                    filter_ratio=FILTER_RATIO, metric=metric
+                    # shorten=MAX_SEQ_LEN, min_len=0, abundance=MIN_ABUNDANCE_VALUE, filter_ratio=0, metric=None
+                    # shorten=MAX_SEQ_LEN, min_len=0, abundance=0, filter_ratio=0, metric=None
                 )
 
                 # Define the embedding/feature file path. If the file exist, we don't recompute the dna embeddings

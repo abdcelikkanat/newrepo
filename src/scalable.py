@@ -179,10 +179,10 @@ class VIBModel(torch.nn.Module):
         self.dropout1_std = torch.nn.Dropout(0.2)
         self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
 
-        # # Init the std weights of the last layer
-        # torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
-        # # torch.nn.init.zeros_(self.linear2_std.weight)
-        # torch.nn.init.zeros_(self.linear2_std.bias)
+        # Init the std weights of the last layer
+        torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
+        # torch.nn.init.zeros_(self.linear2_std.weight)
+        torch.nn.init.zeros_(self.linear2_std.bias)
 
 
     def encoder(self, kmers: torch.Tensor):
@@ -395,29 +395,15 @@ def loss_func(
         # Compute the term (m_i - m_j)^2
         mean_squared_diff = (left_mean - right_mean)**2 * (0.5 / (var_left + var_right))
 
-        if include_std:
+        # Compute the log expectation
+        log_expectation = -0.5*(mean_squared_diff).sum(dim=1)
+        # Compute the logits
+        logits = log_expectation - log1mexp(-log_expectation)
 
-            # Compute the log expectation
-            log_expectation = -0.5*(mean_squared_diff).sum(dim=1)
-            # Compute the logits
-            logits = log_expectation - log1mexp(-log_expectation)
-
-            return torch.mean(
-                torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
-                dim=0, keepdim=False
-            )
-
-        else:
-
-            # Compute the log expectation
-            log_expectation = -mean_squared_diff.sum(dim=1)
-            # Compute the logits
-            logits = log_expectation - log1mexp(-log_expectation)
-
-            return torch.mean(
-                torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
-                dim=0, keepdim=False
-            )
+        return torch.mean(
+            torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
+            dim=0, keepdim=False
+        )
 
     elif loss_name == "mahalanobis2":
 
@@ -513,13 +499,14 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
         # For the second half of the training, we will also train the std weights
         if current_epoch >= epoch_num // 2 and include_std == False:
 
-            # Set the gradient of the std weights to True
+            # # Set the gradient of the std weights to True
             std_params = []
             for name, param in model.named_parameters():
                 param.requires_grad = False
                 if 'std' in name:
                     param.requires_grad = True
                     std_params.append(param)
+            # std_params = model.parameters()
             # Set the include_std to True
             include_std = True
             # Define the optimizer

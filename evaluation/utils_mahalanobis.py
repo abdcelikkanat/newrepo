@@ -9,11 +9,14 @@ import torch.utils.data as util_data
 import torch.nn as nn
 import tqdm
 import os
+import collections
 
 from PIL.features import features
 from scipy.spatial import distance
 import itertools
 from sklearn.preprocessing import normalize
+from sympy import abundance
+
 # from src.vib import VIBModel
 from src.scalable import VIBModel
 from scipy.optimize import linear_sum_assignment
@@ -23,7 +26,7 @@ from scipy.optimize import linear_sum_assignment
 #     "tnf": 100, "tnf_k": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
 # }
 
-def filter_sequences(data_path, model_path, keep_ratio=0.95, min_max_normalization=False):
+def filter_sequences(data_path, model_path, shorten, min_len=0, abundance=0, filter_ratio=0, metric=None):
 
     import csv
 
@@ -34,14 +37,44 @@ def filter_sequences(data_path, model_path, keep_ratio=0.95, min_max_normalizati
     dna_sequences = [d[0] for d in data]
     labels = [d[1] for d in data]
 
-
-    if min_max_normalization:
-        MAX_SEQ_LEN = 20000
-        MIN_SEQ_LEN = 2500
-        MIN_ABUNDANCE_VALUE = 10
-
+    if shorten:
         # Shorten the sequences if they are longer than the MAX_SEQ_LEN value
-        dna_sequences = [seq[:MAX_SEQ_LEN] for seq in dna_sequences]
+        dna_sequences = [seq[:shorten] for seq in dna_sequences]
+
+    if min_len:
+        # Filter sequences with length 'min_len'
+        filterd_idx = [i for i, seq in enumerate(dna_sequences) if len(seq) >= min_len]
+        dna_sequences = [dna_sequences[i] for i in filterd_idx]
+        labels = [labels[i] for i in filterd_idx]
+
+    if abundance:
+        # Filter sequences with low abundance labels (less than 'abundance')
+        label_counts = collections.Counter(labels)
+        filterd_idx = [i for i, l in enumerate(labels) if label_counts[l] >= abundance]
+        dna_sequences = [dna_sequences[i] for i in filterd_idx]
+        labels = [labels[i] for i in filterd_idx]
+
+    # Filter the sequences whose standard deviations are very large
+    if filter_ratio > 0:
+        assert metric is not None, "You need to provide a metric to filter the sequences with respect to variances!"
+
+        kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
+        vib = VIBModel(**kwargs)
+        vib.load_state_dict(model_state_dict)
+
+        # print("----")
+        # print(dna_sequences[0])
+        # print(len(dna_sequences))
+
+        # Get the mean and stds
+        _, stds = vib.seq2emb(dna_sequences)
+
+        # Get the sorted indices of the stds
+        sorted_idx = np.argsort(np.log(stds).mean(axis=1))
+        selected_idx = sorted_idx[:int((1-filter_ratio) * len(stds))]
+        print(f"We had {len(sorted_idx)} sequences and {len(selected_idx)} remained!")
+        dna_sequences = [dna_sequences[i] for i in selected_idx]
+        labels = np.asarray(labels)[selected_idx]
 
     # Convert the sequence labels to numeric values
     label2id = {l: i for i, l in enumerate(set(labels))}
@@ -49,29 +82,6 @@ def filter_sequences(data_path, model_path, keep_ratio=0.95, min_max_normalizati
     num_clusters = len(label2id)
     print(f"Data file contain {len(dna_sequences)} sequences with {num_clusters} clusters.")
 
-    if min_max_normalization:
-        return dna_sequences, labels
-
-    # kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
-    # vib = VIBModel(**kwargs)
-    # vib.load_state_dict(model_state_dict)
-
-    # # Get the mean and stds
-    # embs, stds = vib.seq2emb(dna_sequences)
-
-    # p_zi_zi = np.asarray([
-    #     compute_similarity_matrix(features1=(np.expand_dims(embs[i, :], 0), np.expand_dims(stds[i, :], 0)),
-    #                               features2=(np.expand_dims(embs[i, :], 0), np.expand_dims(stds[i, :], 0)),
-    #                               metric="vib_without_sampling", chunk_size=0)
-    #     for i in range(embs.shape[0])
-    # ]).flatten()
-    #
-    # sorted_idx = p_zi_zi.argsort()
-    # selected_idx = sorted_idx[:int(keep_ratio * len(p_zi_zi))]
-    #
-    # print(f"We had {len(sorted_idx)} sequences and {len(selected_idx)} remained!")
-    #
-    # return np.asarray(dna_sequences)[selected_idx].tolist(), labels[selected_idx]
     return np.asarray(dna_sequences).tolist(), labels
 
 def log1mexp(x):
@@ -250,7 +260,7 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
     similarities = compute_similarity_matrix(features, metric=metric, chunk_size=chunk_size)
 
     # Normalization might be important if similarities include negative values
-    small_number = similarities.min()
+    small_number = 0 #similarities.min()
     similarities = similarities - small_number
     min_similarity = min_similarity - small_number
 
@@ -268,6 +278,7 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
 
         if iter_count == max_iter:
             break
+        print(f"Iteration {iter_count} with {np.sum(p == -1)} unassigned elements")
 
         # Select the seed index, i.e. medoid index (Line 4)
         s = np.argmax(row_sum)
@@ -486,7 +497,7 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
             similarities = np.zeros((features1[0].shape[0], features2[0].shape[0]))
             for i in range(0, features1[0].shape[0], chunk_size):
 
-                mean_squared_diff = (features1[0][i:i + chunk_size, :][:, np.newaxis] - features2[0])**2 * (0.5 / (features1[1][i:i + chunk_size, :][:, np.newaxis]**2 + features2[1]**2))
+                mean_squared_diff = (features1[0][i:i + chunk_size, :][:, np.newaxis, :] - features2[0][np.newaxis, :, :])**2 * (0.5 / (features1[1][i:i + chunk_size, :][:, np.newaxis, :]**2 + features2[1][np.newaxis, :, :]**2))
                 log_expectation = -0.5 * (mean_squared_diff).sum(axis=-1)
                 similarities[i:i + chunk_size, :] = np.exp(log_expectation)
         else:
