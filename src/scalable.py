@@ -179,10 +179,10 @@ class VIBModel(torch.nn.Module):
         self.dropout1_std = torch.nn.Dropout(0.2)
         self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
 
-        # Init the std weights of the last layer
-        torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
-        # torch.nn.init.zeros_(self.linear2_std.weight)
-        torch.nn.init.zeros_(self.linear2_std.bias)
+        # # Init the std weights of the last layer
+        # torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
+        # # torch.nn.init.zeros_(self.linear2_std.weight)
+        # torch.nn.init.zeros_(self.linear2_std.bias)
 
 
     def encoder(self, kmers: torch.Tensor):
@@ -199,7 +199,8 @@ class VIBModel(torch.nn.Module):
         h = self.batch1_std(h)
         h = self.activation1_std(h)
         h = self.dropout1_std(h)
-        std = torch.exp(self.linear2_std(h))
+        # std = torch.exp(self.linear2_std(h))
+        std = self.linear2_std(h)
 
         return mean, std
 
@@ -260,7 +261,7 @@ class VIBModel(torch.nn.Module):
 
 def loss_func(
         left_mean: torch.Tensor, left_std: torch.Tensor, right_mean: torch.Tensor, right_std: torch.Tensor,
-        labels: torch.Tensor, loss_name:str = "vib", include_std:bool = True, samples_num = 8, alpha=1., beta=1e-4,
+        labels: torch.Tensor, loss_name:str = "vib", include_std:bool = True, samples_num = 8,
 ):
     """
     Definition of the loss functions
@@ -274,154 +275,19 @@ def loss_func(
         p = torch.exp(-torch.norm(left_mean - right_mean, dim=1)**2)
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
-    elif loss_name == "vib":
-
-        if include_std:
-
-            epsilon_left = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
-            epsilon_right = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
-            z_i = left_mean + left_std * epsilon_left  # shape (k, batch, d)
-            z_j = right_mean + right_std * epsilon_right  # shape (k, batch, d)
-            # Compute the distance
-            distance = torch.sum((z_i - z_j) ** 2, dim=2)  # shape (k, batch)
-            # Get log probabilities, \sum_k exp(-dist) / K (In fact, we don't need the normalization)
-            log_p_yij_ri_rj = torch.logsumexp(-distance, dim=0) - torch.log(torch.tensor(samples_num, dtype=torch.float))
-
-        else:
-
-            log_p_yij_ri_rj = -torch.sum((left_mean - right_mean) ** 2, dim=1)
-
-        # Define logits, log(p / (1-p))
-        logits = log_p_yij_ri_rj - log1mexp(-log_p_yij_ri_rj)
-
-        return torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='mean')
-
-    elif loss_name == "non_stable_vib":
-
-        if include_std:
-
-            epsilon_left = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
-            epsilon_right = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
-            z_left = left_mean + left_std * epsilon_left  # shape (samples, batch, d)
-            z_right = right_mean + right_std * epsilon_right  # shape (samples, batch, d)
-
-        else:
-
-            z_left, z_right = left_mean, right_mean
-
-        # Define the success probability
-        p = torch.mean(torch.exp(-torch.sum((z_left - z_right) ** 2, dim=-1)), dim=0, keepdim=False)
-
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
-
-    elif loss_name == "bottle":
-
-            epsilon_left = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
-            epsilon_right = torch.randn((samples_num, left_mean.shape[0], left_mean.shape[1]), device=left_mean.device)
-
-            if not include_std:
-                left_std, right_std = torch.zeros_like(left_std), torch.zeros_like(right_std)
-
-            z_left = left_mean + left_std * epsilon_left  # shape (samples, batch, d)
-            z_right = right_mean + right_std * epsilon_right  # shape (samples, batch, d)
-
-            # The loglikelihood term
-            distance = torch.sum((z_left - z_right) ** 2, dim=2)  # sh
-            # Define logits, log(p / (1-p))
-            logits = -distance - log1mexp(distance)
-            labels_expand = labels.unsqueeze(0).expand(samples_num, -1)
-            log_loss = torch.nn.functional.binary_cross_entropy_with_logits(logits, labels_expand, reduction='none')
-            log_loss = torch.mean(log_loss, dim=0) 
-
-            # The KL divergence term
-            kl_left = 0.5*((left_mean**2).sum(dim=1) + torch.sum(left_std**2, dim =-1, keepdim=False) - z_left.shape[-1] - torch.sum(torch.log(left_std**2), dim=-1, keepdim=False))
-            kl_right = 0.5*((right_mean**2).sum(dim=1) + torch.sum(right_std**2, dim =-1, keepdim=False) - z_right.shape[-1] - torch.sum(torch.log(right_std**2), dim=-1, keepdim=False)) 
-            kl = kl_left + kl_right
-            
-            # The total loss
-            if include_std:
-                loss = torch.mean(log_loss + beta * kl)
-            else:
-                loss = torch.mean(log_loss)
-            return loss
-
-
-    elif loss_name == "map":
-
-        # Define the coefficient
-        coeff = 1.
-        # Compute the term (m_i - m_j)^2
-        mean_squared_diff = (left_mean - right_mean)**2
-
-        if include_std:
-
-            # Compute the variances
-            var_left, var_right = left_std**2, right_std**2
-            # Compute the terms log(1+2(s_i^2 + s_j^2))
-            log1p_cov = torch.log1p(2 * coeff * (var_left + var_right))
-            # Compute the log expectation
-            log_expectation = -0.5*log1p_cov.sum(dim=1) - ((coeff*mean_squared_diff)/torch.exp(log1p_cov)).sum(dim=1)
-            # Compute the logits
-            logits = log_expectation - log1mexp(-log_expectation)
-
-            # Compute the inverse gamma prior, regularization term
-            inv_gamma_prior = torch.mean(
-                beta*((1./var_left) + (1./var_right)) + (alpha+1)*(torch.log(var_left)+torch.log(var_right)),
-                dim=1, keepdim=False
-            )
-
-            return torch.mean(
-                torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none') + inv_gamma_prior,
-                dim=0, keepdim=False
-            )
-
-        else:
-
-            # Compute the log expectation
-            log_expectation = -coeff * mean_squared_diff.sum(dim=1)
-            # Compute the logits
-            logits = log_expectation - log1mexp(-log_expectation)
-
-            return torch.mean(
-                torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
-                dim=0, keepdim=False
-            )
-
     elif loss_name == "mahalanobis":
 
         # Compute the variances
-        var_left, var_right = left_std ** 2, right_std ** 2
+        var_left, var_right = left_std ** 2  + 1e-9, right_std ** 2 + 1e-9
 
         # Compute the term (m_i - m_j)^2
         mean_squared_diff = (left_mean - right_mean)**2 * (0.5 / (var_left + var_right))
 
         # Compute the log expectation
         log_expectation = -0.5*(mean_squared_diff).sum(dim=1)
-        # Compute the logits
-        logits = log_expectation - log1mexp(-log_expectation)
 
-        return torch.mean(
-            torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
-            dim=0, keepdim=False
-        )
+        return torch.nn.functional.binary_cross_entropy(torch.exp(log_expectation), labels, reduction='mean')
 
-    elif loss_name == "mahalanobis2":
-
-        # Compute the variances
-        var_left, var_right = left_std ** 2, right_std ** 2
-
-        # Compute the term (m_i - m_j)^2
-        mean_squared_diff = (left_mean - right_mean) ** 2 * ((1. / var_left) + (1. / var_right))
-
-        # Compute the log expectation
-        log_expectation = -mean_squared_diff.sum(dim=1)
-        # Compute the logits
-        logits = log_expectation - log1mexp(-log_expectation)
-
-        return torch.mean(
-            torch.nn.functional.binary_cross_entropy_with_logits(logits, labels, reduction='none'),
-            dim=0, keepdim=False
-        )
 
     else:
         raise ValueError(f"Unknown loss function name: {loss_name}")
@@ -467,7 +333,7 @@ def train_single_epoch(device, model, criterion, optimizer, data_loader):
 
     return average_epoch_loss
 
-def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path, summary_writer, alpha=1., beta=1e-4):
+def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path, summary_writer):
 
     ### Define the optimizer
     # At the beginning, we will not train the standard deviation parameters so we will not include them in the optimizer
@@ -480,7 +346,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             model_params.append(param)
     ### Define the loss function.
     # Since we won't train the std weights at the beginning, we will not include them in the loss function
-    criterion = partial(loss_func, loss_name=loss_name, include_std=include_std, alpha=alpha, beta=beta)
+    criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
     # Define the optimizer
     optimizer = torch.optim.Adam(model_params, lr=lr)
 
@@ -497,7 +363,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
 
 
         # For the second half of the training, we will also train the std weights
-        if current_epoch >= epoch_num // 2 and include_std == False:
+        if current_epoch >= epoch_num * (1./ 2) and include_std == False:
 
             # # Set the gradient of the std weights to True
             std_params = []
@@ -510,9 +376,9 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             # Set the include_std to True
             include_std = True
             # Define the optimizer
-            optimizer = torch.optim.Adam(std_params, lr=lr)
+            optimizer = torch.optim.Adam(std_params, lr=lr/1e2)
             # Define the loss function
-            criterion = partial(loss_func, loss_name=loss_name, include_std=include_std, alpha=alpha, beta=beta)
+            criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
 
 
         ## Run the training for the current epoch
@@ -562,7 +428,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
 def main_worker(
         device, world_size, distributed:bool, input_file_path: str, output_path: str, neg_sample_per_pos: int,
         max_seq_num: int, k: int, out_dim: int, lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int,
-        loss_name: str, log_dir:str, seed: int, alpha:float=1., beta:float=1e-4
+        loss_name: str, log_dir:str, seed: int,
 ):
     ### Initialize the device
     if distributed:
@@ -603,7 +469,6 @@ def main_worker(
     train(
         device=device, distributed=distributed, model=model, lr=lr, loss_name=loss_name, data_loader=training_loader,
         epoch_num=epoch_num, save_every=save_every, output_path=output_path, summary_writer=summary_writer,
-        alpha=alpha, beta=beta
     )
 
     # Close the summary writer
@@ -635,8 +500,6 @@ if __name__ == "__main__":
     parser.add_argument('--loss_name', type=str, default="vib_without_sampling", help='Loss function (bern, vib, non_stable_vib and vib_without_sampling)')
     parser.add_argument('--log_dir', type=str, default="", help='Path directory to save the log file')
     parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
-    parser.add_argument('--beta', type=float, default=1e-4, help='Beta value for the variational information bottleneck')
-    parser.add_argument('--alpha', type=float, default=1., help='Alpha value for the MAP loss function')
 
     args = parser.parse_args()
 
@@ -665,12 +528,10 @@ if __name__ == "__main__":
         print(f"\t- Device: {device}")
     print(f"\t- Loss function: {args.loss_name}")
     print(f"\t- Batch size: {args.batch_size}")
-    print(f"\t- Alpha: {args.alpha}")
-    print(f"\t- Beta: {args.beta}")
     arguments = (
         world_size, args.distributed, args.input, args.output_path, args.neg_sample_per_pos, args.max_seq_num,
         args.k, args.out_dim, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,
-        args.log_dir, args.seed, args.alpha, args.beta
+        args.log_dir, args.seed,
     )
     if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
