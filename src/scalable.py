@@ -179,10 +179,10 @@ class VIBModel(torch.nn.Module):
         self.dropout1_std = torch.nn.Dropout(0.2)
         self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
 
-        # # Init the std weights of the last layer
-        # torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
-        # # torch.nn.init.zeros_(self.linear2_std.weight)
-        # torch.nn.init.zeros_(self.linear2_std.bias)
+        # Init the std weights of the last layer
+        torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
+        # torch.nn.init.zeros_(self.linear2_std.weight)
+        torch.nn.init.ones_(self.linear2_std.bias)
 
 
     def encoder(self, kmers: torch.Tensor):
