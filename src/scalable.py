@@ -179,10 +179,10 @@ class VIBModel(torch.nn.Module):
         self.dropout1_std = torch.nn.Dropout(0.2)
         self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
 
-        # Init the std weights of the last layer
-        torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
-        # torch.nn.init.zeros_(self.linear2_std.weight)
-        torch.nn.init.ones_(self.linear2_std.bias)
+        # # Init the std weights of the last layer
+        # torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
+        # # torch.nn.init.zeros_(self.linear2_std.weight)
+        # torch.nn.init.ones_(self.linear2_std.bias)
 
 
     def encoder(self, kmers: torch.Tensor):
@@ -199,19 +199,20 @@ class VIBModel(torch.nn.Module):
         h = self.batch1_std(h)
         h = self.activation1_std(h)
         h = self.dropout1_std(h)
-        # std = torch.exp(self.linear2_std(h))
-        std = self.linear2_std(h)
+        log_cov = self.linear2_std(h)
+        cov = torch.exp(log_cov)
+        # std = self.linear2_std(h)
 
-        return mean, std
+        return mean, cov
 
     def forward(self, left_kmers: torch.Tensor, right_kmers:torch.Tensor):
         """
         Forward pass
         """
-        left_mean, left_std = self.encoder(left_kmers)
-        right_mean, right_std = self.encoder(right_kmers)
+        left_mean, left_cov = self.encoder(left_kmers)
+        right_mean, right_cov = self.encoder(right_kmers)
 
-        return left_mean, left_std, right_mean, right_std
+        return left_mean, left_cov, right_mean, right_cov
 
     def get_k(self):
         """
@@ -246,9 +247,9 @@ class VIBModel(torch.nn.Module):
             if normalized:
                 kmers = kmers / kmers.sum(dim=1, keepdim=True)
 
-            means, stds = self.encoder(kmers)
+            means, covs = self.encoder(kmers)
 
-        return means.detach().numpy(), stds.detach().numpy()
+        return means.detach().numpy(), covs.detach().numpy()
 
     def save(self, path:str):
         """
@@ -260,7 +261,7 @@ class VIBModel(torch.nn.Module):
 
 
 def loss_func(
-        left_mean: torch.Tensor, left_std: torch.Tensor, right_mean: torch.Tensor, right_std: torch.Tensor,
+        left_mean: torch.Tensor, left_cov: torch.Tensor, right_mean: torch.Tensor, right_cov: torch.Tensor,
         labels: torch.Tensor, loss_name:str = "vib", include_std:bool = True, samples_num = 8,
 ):
     """
@@ -269,22 +270,29 @@ def loss_func(
 
     if loss_name == "bern":
 
-        left_mean = left_mean + left_std * 0
-        right_mean = right_mean + right_std * 0
+        left_mean = left_mean
+        right_mean = right_mean
 
         p = torch.exp(-torch.norm(left_mean - right_mean, dim=1)**2)
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
     elif loss_name == "mahalanobis":
 
-        # Compute the variances
-        var_left, var_right = left_std ** 2  + 1e-9, right_std ** 2 + 1e-9
+        if not include_std:
 
-        # Compute the term (m_i - m_j)^2
-        mean_squared_diff = (left_mean - right_mean)**2 * (0.5 / (var_left + var_right))
+            # Compute the term (m_i - m_j)^2
+            mean_squared_diff = (left_mean - right_mean)**2 * 0.5
 
-        # Compute the log expectation
-        log_expectation = -0.5*(mean_squared_diff).sum(dim=1)
+            # Compute the log expectation
+            log_expectation = -0.5 * (mean_squared_diff).sum(dim=1)
+
+        else:
+
+            # Compute the term (m_i - m_j)^2
+            mean_squared_diff = (left_mean - right_mean)**2 * (0.5 / (left_cov + right_cov))
+
+            # Compute the log expectation
+            log_expectation = -0.5*(mean_squared_diff).sum(dim=1)
 
         return torch.nn.functional.binary_cross_entropy(torch.exp(log_expectation), labels, reduction='mean')
 
@@ -298,10 +306,10 @@ def train_batch(model, criterion, optimizer, left_kmers: torch.Tensor, right_kme
     optimizer.zero_grad()
 
     # Make predictions for the current epoch
-    left_mean, left_std, right_mean, right_std = model(left_kmers, right_kmers)
+    left_mean, left_cov, right_mean, right_cov = model(left_kmers, right_kmers)
 
     # Compute the loss and backpropagate
-    batch_loss = criterion(left_mean, left_std, right_mean, right_std, labels)
+    batch_loss = criterion(left_mean, left_cov, right_mean, right_cov, labels)
     batch_loss.backward()
 
     # Update the model parameters
@@ -363,7 +371,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
 
 
         # For the second half of the training, we will also train the std weights
-        if current_epoch >= epoch_num * (1./ 2) and include_std == False:
+        if (current_epoch+1) >= epoch_num * (1./ 2) and include_std == False:
 
             # # Set the gradient of the std weights to True
             std_params = []
@@ -379,6 +387,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             optimizer = torch.optim.Adam(std_params, lr=lr/1e2)
             # Define the loss function
             criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
+            print(f"\t- Now including the std weights in the training (epoch {current_epoch+1})")
 
 
         ## Run the training for the current epoch
@@ -391,11 +400,11 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             if device == 0:
                 summary_writer.add_scalar('Loss/train', loss, current_epoch)
                 summary_writer.add_scalar('Time/epoch', loss_time, current_epoch)
-                print(f"\t- Epoch: {current_epoch}/{epoch_num} - Loss: {loss} ({loss_time:.2f} secs)")
+                print(f"\t- Epoch: {current_epoch+1}/{epoch_num} - Loss: {loss} ({loss_time:.2f} secs)")
         else:
             summary_writer.add_scalar('Loss/train', loss, current_epoch)
             summary_writer.add_scalar('Time/epoch', loss_time, current_epoch)
-            print(f"\t- Epoch: {current_epoch}/{epoch_num} - Loss: {loss} ({loss_time:.2f} secs)")
+            print(f"\t- Epoch: {current_epoch+1}/{epoch_num} - Loss: {loss} ({loss_time:.2f} secs)")
 
         ## Save the checkpoint if necessary
         if save_every > 0 and (current_epoch + 1) % save_every == 0:

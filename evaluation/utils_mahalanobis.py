@@ -62,16 +62,13 @@ def filter_sequences(data_path, model_path, shorten, min_len=0, abundance=0, fil
         vib = VIBModel(**kwargs)
         vib.load_state_dict(model_state_dict)
 
-        # print("----")
-        # print(dna_sequences[0])
-        # print(len(dna_sequences))
 
         # Get the mean and stds
-        _, stds = vib.seq2emb(dna_sequences)
+        _, covs = vib.seq2emb(dna_sequences)
 
         # Get the sorted indices of the stds
-        sorted_idx = np.argsort(np.log(stds+1).mean(axis=1))
-        selected_idx = sorted_idx[:int((1-filter_ratio) * len(stds))]
+        sorted_idx = np.argsort(np.log(covs+1).mean(axis=1))
+        selected_idx = sorted_idx[:int((1-filter_ratio) * len(covs))]
         print(f"We had {len(sorted_idx)} sequences and {len(selected_idx)} remained!")
         dna_sequences = [dna_sequences[i] for i in selected_idx]
         labels = np.asarray(labels)[selected_idx]
