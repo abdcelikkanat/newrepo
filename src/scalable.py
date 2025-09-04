@@ -63,6 +63,7 @@ class PairDataset(Dataset):
         """
         PairDataset constructor
         """
+        print("Multi View Sampling Strategy - Nonoverlapping 3 Parts")
         # Set the parameters
         self.__kmers = None # A tensor of shape N x D, storing the k-mer profiles
         self.__indices = None # A tensor of shape L x 2, storing the indices of the positive and negative pairs
@@ -96,8 +97,18 @@ class PairDataset(Dataset):
         lines = pd.read_csv(file_path, sep=',', header=None).iloc[chosen_lines].values.tolist()
         for line in lines:
             left_seq, right_seq = line[0], line[1]
-            left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
-            right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
+            full_seq = left_seq + right_seq
+            # Split the full sequence into three parts
+            part1, part2, part3 = full_seq[:len(full_seq)//3], full_seq[len(full_seq)//3:2*len(full_seq)//3], full_seq[2*len(full_seq)//3:]
+
+            left_kmer_profiles.append(self.__kc.seq2kmer(part1))
+            right_kmer_profiles.append(self.__kc.seq2kmer(part2))
+
+            left_kmer_profiles.append(self.__kc.seq2kmer(part1))
+            right_kmer_profiles.append(self.__kc.seq2kmer(part3))
+
+            left_kmer_profiles.append(self.__kc.seq2kmer(part2))
+            right_kmer_profiles.append(self.__kc.seq2kmer(part3))
 
         # Combine the left and right k-mer profiles.
         # The first half of the profiles are the left ones and the second half are the right ones
