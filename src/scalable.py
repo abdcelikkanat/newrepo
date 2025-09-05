@@ -31,6 +31,13 @@ def log1mexp(x: torch.Tensor):
         x < log2, torch.log(-torch.expm1(-x)), torch.log1p(-torch.exp(-x))
     )
 
+def get_reverse_complement(seq: str):
+    """
+    Get the reverse complement of a DNA sequence
+    """
+    complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
+    return ''.join(complement.get(base, base) for base in reversed(seq))
+
 class KmerConverter:
     def __init__(self, k):
 
@@ -63,7 +70,7 @@ class PairDataset(Dataset):
         """
         PairDataset constructor
         """
-        print("Multi View Sampling Strategy - Nonoverlapping 3 Parts")
+        print("Creative Multi View Sampling Strategy - Nonoverlapping 3 Parts")
         # Set the parameters
         self.__kmers = None # A tensor of shape N x D, storing the k-mer profiles
         self.__indices = None # A tensor of shape L x 2, storing the indices of the positive and negative pairs
@@ -97,18 +104,43 @@ class PairDataset(Dataset):
         lines = pd.read_csv(file_path, sep=',', header=None).iloc[chosen_lines].values.tolist()
         for line in lines:
             left_seq, right_seq = line[0], line[1]
-            full_seq = left_seq + right_seq
-            # Split the full sequence into three parts
-            part1, part2, part3 = full_seq[:len(full_seq)//3], full_seq[len(full_seq)//3:2*len(full_seq)//3], full_seq[2*len(full_seq)//3:]
 
+            # Split the full sequence into three parts
+            left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
+            right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
+
+            left_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(left_seq)))
+            right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
+
+            left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
+            right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(right_seq)))
+
+            # Mix the left and right and left parts
+            #assert(len(left_seq) == len(right_seq)), "The left and right sequences must have the same length"
+            seq_len = min(len(left_seq), len(right_seq))
+            part1 = "".join(
+                [left_seq[i:i+k] if i % k == 0 else right_seq[i:i+k] for i in np.arange(0, seq_len, k)]
+            )
+            part2 = "".join(
+                [right_seq[i:i + k] if i % k == 0 else left_seq[i:i + k] for i in np.arange(0, seq_len, k)]
+            )
             left_kmer_profiles.append(self.__kc.seq2kmer(part1))
             right_kmer_profiles.append(self.__kc.seq2kmer(part2))
 
-            left_kmer_profiles.append(self.__kc.seq2kmer(part1))
-            right_kmer_profiles.append(self.__kc.seq2kmer(part3))
+            left_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part1)))
+            right_kmer_profiles.append(self.__kc.seq2kmer(part2))
 
-            left_kmer_profiles.append(self.__kc.seq2kmer(part2))
-            right_kmer_profiles.append(self.__kc.seq2kmer(part3))
+            left_kmer_profiles.append(self.__kc.seq2kmer(part1))
+            right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part2)))
+
+            # part3 = "".join(
+            #     [left_seq[i:i + k] if i % k == 0 else right_seq[i:i + k][::-1] for i in np.arange(0, seq_len, k)]
+            # )
+            # part4 = "".join(
+            #     [right_seq[i:i + k] if i % k == 0 else left_seq[i:i + k][::-1] for i in np.arange(0, seq_len, k)]
+            # )
+            # left_kmer_profiles.append(self.__kc.seq2kmer(part3))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(part4))
 
         # Combine the left and right k-mer profiles.
         # The first half of the profiles are the left ones and the second half are the right ones
@@ -178,17 +210,17 @@ class VIBModel(torch.nn.Module):
         set_seed(seed)
 
         # Define the layers
-        self.linear1_mean = torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float)
-        self.batch1_mean = torch.nn.BatchNorm1d(512, dtype=torch.float)
+        self.linear1_mean = torch.nn.Linear(self.__kc.get_kmers_num(), 64, dtype=torch.float)
+        self.batch1_mean = torch.nn.BatchNorm1d(64, dtype=torch.float)
         self.activation1_mean = torch.nn.Sigmoid()
         self.dropout1_mean = torch.nn.Dropout(0.2)
-        self.linear2_mean = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
+        self.linear2_mean = torch.nn.Linear(64, self.__out_dim, dtype=torch.float)
 
-        self.linear1_std = torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float)
-        self.batch1_std = torch.nn.BatchNorm1d(512, dtype=torch.float)
+        self.linear1_std = torch.nn.Linear(self.__kc.get_kmers_num(), 64, dtype=torch.float)
+        self.batch1_std = torch.nn.BatchNorm1d(64, dtype=torch.float)
         self.activation1_std = torch.nn.Sigmoid()
         self.dropout1_std = torch.nn.Dropout(0.2)
-        self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
+        self.linear2_std = torch.nn.Linear(64, self.__out_dim, dtype=torch.float)
 
         # # Init the std weights of the last layer
         # torch.nn.init.xavier_normal_(self.linear2_std.weight, gain=1e-9)
@@ -381,24 +413,24 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             data_loader.sampler.set_epoch(current_epoch)
 
 
-        # For the second half of the training, we will also train the std weights
-        if (current_epoch+1) > epoch_num * (1./ 2) and include_std == False:
-
-            # # Set the gradient of the std weights to True
-            std_params = []
-            for name, param in model.named_parameters():
-                param.requires_grad = False
-                if 'std' in name:
-                    param.requires_grad = True
-                    std_params.append(param)
-            # std_params = model.parameters()
-            # Set the include_std to True
-            include_std = True
-            # Define the optimizer
-            optimizer = torch.optim.Adam(std_params, lr=lr/1e2)
-            # Define the loss function
-            criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
-            print(f"\t- Now including the std weights in the training (epoch {current_epoch+1})")
+        # # For the second half of the training, we will also train the std weights
+        # if (current_epoch+1) > epoch_num * (1./ 2) and include_std == False:
+        #
+        #     # # Set the gradient of the std weights to True
+        #     std_params = []
+        #     for name, param in model.named_parameters():
+        #         param.requires_grad = False
+        #         if 'std' in name:
+        #             param.requires_grad = True
+        #             std_params.append(param)
+        #     # std_params = model.parameters()
+        #     # Set the include_std to True
+        #     include_std = True
+        #     # Define the optimizer
+        #     optimizer = torch.optim.Adam(std_params, lr=lr/1e2)
+        #     # Define the loss function
+        #     criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
+        #     print(f"\t- Now including the std weights in the training (epoch {current_epoch+1})")
 
 
         ## Run the training for the current epoch
