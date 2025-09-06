@@ -115,35 +115,35 @@ class PairDataset(Dataset):
             left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
             right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(right_seq)))
 
-            full_seq = left_seq + right_seq
-            part1 = full_seq[:len(full_seq)//3]
-            part2 = full_seq[len(full_seq)//3:2*len(full_seq)//3]
-            part3 = full_seq[2 * len(full_seq)//3:]
-
-            left_kmer_profiles.append(self.__kc.seq2kmer(part1))
-            right_kmer_profiles.append(self.__kc.seq2kmer(part2))
-
-            left_kmer_profiles.append(self.__kc.seq2kmer(part1))
-            right_kmer_profiles.append(self.__kc.seq2kmer(part3))
-
-            left_kmer_profiles.append(self.__kc.seq2kmer(part2))
-            right_kmer_profiles.append(self.__kc.seq2kmer(part3))
-
-            left_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part1)))
-            right_kmer_profiles.append(self.__kc.seq2kmer(part2))
-            left_kmer_profiles.append(self.__kc.seq2kmer(part1))
-            right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part2)))
-
-            left_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part1)))
-            right_kmer_profiles.append(self.__kc.seq2kmer(part3))
-            left_kmer_profiles.append(self.__kc.seq2kmer(part1))
-            right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part3)))
-
-            left_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part2)))
-            right_kmer_profiles.append(self.__kc.seq2kmer(part3))
-            left_kmer_profiles.append(self.__kc.seq2kmer(part2))
-            right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part3)))
-
+            # full_seq = left_seq + right_seq
+            # part1 = full_seq[:len(full_seq)//3]
+            # part2 = full_seq[len(full_seq)//3:2*len(full_seq)//3]
+            # part3 = full_seq[2 * len(full_seq)//3:]
+            #
+            # left_kmer_profiles.append(self.__kc.seq2kmer(part1))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(part2))
+            #
+            # left_kmer_profiles.append(self.__kc.seq2kmer(part1))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(part3))
+            #
+            # left_kmer_profiles.append(self.__kc.seq2kmer(part2))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(part3))
+            #
+            # left_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part1)))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(part2))
+            # left_kmer_profiles.append(self.__kc.seq2kmer(part1))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part2)))
+            #
+            # left_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part1)))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(part3))
+            # left_kmer_profiles.append(self.__kc.seq2kmer(part1))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part3)))
+            #
+            # left_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part2)))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(part3))
+            # left_kmer_profiles.append(self.__kc.seq2kmer(part2))
+            # right_kmer_profiles.append(self.__kc.seq2kmer(get_reverse_complement(part3)))
+            # ==========================================================================================================
             # # Mix the left and right and left parts
             # #assert(len(left_seq) == len(right_seq)), "The left and right sequences must have the same length"
             # seq_len = min(len(left_seq), len(right_seq))
