@@ -1,7 +1,5 @@
 # This script has been adapted from the file available at the following address:
 # https://github.com/MAGICS-LAB/DNABERT_S/blob/main/evaluate/eval_binning.py
-from math import log1p
-
 import numpy as np
 import transformers
 import torch
@@ -10,15 +8,10 @@ import torch.nn as nn
 import tqdm
 import os
 import collections
-
-from PIL.features import features
 from scipy.spatial import distance
 import itertools
 from sklearn.preprocessing import normalize
-from sympy import abundance
-
-# from src.vib import VIBModel
-from src.scalable import VIBModel
+from src.model import Model
 from scipy.optimize import linear_sum_assignment
 
 # # Here, we define the batch sizes for inference. It might be important for the memory requirements of the model.
@@ -26,7 +19,7 @@ from scipy.optimize import linear_sum_assignment
 #     "tnf": 100, "tnf_k": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
 # }
 
-def filter_sequences(data_path, model_path, shorten, min_len=0, abundance=0, filter_ratio=0, metric=None):
+def filter_sequences(data_path, model_path, shorten, min_len=0, abundance=0, filter_ratio=0, filter_strategy="before"):
 
     import csv
 
@@ -54,20 +47,17 @@ def filter_sequences(data_path, model_path, shorten, min_len=0, abundance=0, fil
         dna_sequences = [dna_sequences[i] for i in filterd_idx]
         labels = [labels[i] for i in filterd_idx]
 
-    # Filter the sequences whose standard deviations are very large
-    if filter_ratio > 0:
-        assert metric is not None, "You need to provide a metric to filter the sequences with respect to variances!"
+    # Filter the sequences that have the largest minimum covariances
+    if filter_ratio > 0 and filter_strategy == "before":
 
         kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
-        vib = VIBModel(**kwargs)
-        vib.load_state_dict(model_state_dict)
-
-
+        model = Model(**kwargs)
+        model.load_state_dict(model_state_dict)
         # Get the mean and stds
-        _, covs = vib.seq2emb(dna_sequences)
+        _, covs = model.seq2emb(dna_sequences)
 
         # Get the sorted indices of the stds
-        sorted_idx = np.argsort(np.log(covs+1).mean(axis=1))
+        sorted_idx = np.argsort( np.min(covs, axis=1) )
         selected_idx = sorted_idx[:int((1-filter_ratio) * len(covs))]
         print(f"We had {len(sorted_idx)} sequences and {len(selected_idx)} remained!")
         dna_sequences = [dna_sequences[i] for i in selected_idx]
@@ -164,24 +154,14 @@ def get_embedding(
             embedding = calculate_tnf(dna_sequences, k=k)
             output = normalize(embedding, norm=norm)
 
-        elif model_name == "vib":
+        elif model_name == "ours":
 
             kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
-            kwargs['device'] = "cpu"
-            vib = VIBModel(**kwargs)
-            vib.load_state_dict(model_state_dict)
-            embedding, stds = vib.read2emb(dna_sequences)
+            model = Model(**kwargs)
+            model.load_state_dict(model_state_dict)
+            embedding, cov = model.seq2emb(dna_sequences)
             # Note that the output is a tuple of embedding and covariances
-            output = (embedding, stds)
-
-        elif model_name == "scalable_vib":
-
-            kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
-            vib = VIBModel(**kwargs)
-            vib.load_state_dict(model_state_dict)
-            embedding, stds = vib.seq2emb(dna_sequences)
-            # Note that the output is a tuple of embedding and covariances
-            output = (embedding, stds)
+            output = (embedding, cov)
 
         else:
             raise ValueError(f"Unknown model {model_name}")
@@ -480,29 +460,6 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
         else:
             similarities = np.dot(features1, features2.T)
 
-    elif metric == "euclidean" or metric == "l2":
-
-        if isinstance(features1, tuple):
-            features1, features2 = features1[0], features2[0]
-
-        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.))
-
-    elif metric == "mahalanobis":
-
-        if chunk_size:
-
-            similarities = np.zeros((features1[0].shape[0], features2[0].shape[0]))
-            for i in range(0, features1[0].shape[0], chunk_size):
-
-                mean_squared_diff = (features1[0][i:i + chunk_size, :][:, np.newaxis, :] - features2[0][np.newaxis, :, :])**2 * (0.5 / (features1[1][i:i + chunk_size, :][:, np.newaxis, :]**2 + features2[1][np.newaxis, :, :]**2))
-                log_expectation = -0.5 * (mean_squared_diff).sum(axis=-1)
-                similarities[i:i + chunk_size, :] = np.exp(log_expectation)
-        else:
-
-            mean_squared_diff = (features1[0] - features2[0]) ** 2 * (0.5 / (features1[1] + features2[2]))
-            log_expectation = -0.5 * (mean_squared_diff).sum(axis=-1)
-            similarities = np.exp(log_expectation)
-
     elif metric == "l1":
 
         if isinstance(features1, tuple):
@@ -510,63 +467,19 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
 
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=1))
 
-    elif metric == "vib":
+    elif metric == "l2":
 
-        k = 8
-        means_left, stds_left = features1
-        means_right, stds_right = features2
+        if isinstance(features1, tuple):
+            features1, features2 = features1[0], features2[0]
 
-        if chunk_size:
+        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.)**2)
 
-            similarities = np.zeros((means_left.shape[0], means_right.shape[0]))
-            for i in range(0, means_left.shape[0], chunk_size):
-                eps_left = np.random.randn(k, min(i + chunk_size, means_left.shape[0]) - i, means_left.shape[1])
-                eps_right = np.random.randn(k, means_right.shape[0], means_right.shape[1])
-                similarities[i:i + chunk_size, :] = np.mean(np.exp(
-                    -torch.cdist(
-                        torch.from_numpy(means_left[i:i + chunk_size, :] + stds_left[i:i + chunk_size, :]*eps_left),
-                        torch.from_numpy(means_right + stds_right*eps_right)
-                     ).numpy()**2
-                ), axis=0)
+    elif metric == "euclidean":
 
-        else:
+        if isinstance(features1, tuple):
+            features1, features2 = features1[0], features2[0]
 
-            eps_left = np.random.randn(k, means_left.shape[0], means_right.shape[1])
-            eps_right = np.random.randn(k, means_right.shape[0], means_right.shape[1])
-
-            similarities = np.mean(np.exp(
-                -torch.cdist(torch.from_numpy(means_left + stds_left*eps_left), torch.from_numpy(means_right + stds_right*eps_right)).numpy()**2
-            ), axis=0)
-
-    elif metric == "vib_without_sampling":
-
-        means_left, vars_left = features1[0], features1[1] ** 2
-        means_right, vars_right = features2[0], features2[1] ** 2
-        coefficient = 1. / means_left.shape[1]
-
-        if chunk_size:
-
-            similarities = np.zeros((means_left.shape[0], means_right.shape[0]))
-            for i in range(0, means_left.shape[0], chunk_size):
-                # Compute the terms log(1+2(s_i^2 + s_j^2))
-                log1p_cov = np.log1p(2 * coefficient * (vars_left[i:i + chunk_size, :][:, np.newaxis] + vars_right))
-                # Compute the term m_i - m_j
-                mean_squared_diff = (means_left[i:i + chunk_size, :][:, np.newaxis] - means_right) ** 2
-                # Compute the log expectation
-                log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / (coefficient * np.exp(log1p_cov))).sum(axis=-1)
-                # Compute the similarity
-                similarities[i:i + chunk_size, :] = log_expectation - log1mexp(-log_expectation)  #log_expectation #np.exp(log_expectation)
-
-        else:
-
-            # Compute the terms log(1+2(s_i^2 + s_j^2))
-            log1p_cov = np.log1p(2 * coefficient * (vars_left[:, np.newaxis] + vars_right))
-            # Compute the term m_i - m_j
-            mean_squared_diff = (means_left[:, np.newaxis] - means_right) ** 2
-            # Compute the log expectation
-            log_expectation = -0.5 * log1p_cov.sum(axis=-1) - (mean_squared_diff / (coefficient * np.exp(log1p_cov))).sum(axis=-1)
-            # Compute the similarity
-            similarities = log_expectation - log1mexp(-log_expectation) #log_expectation #np.exp(log_expectation)
+        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.))
 
     else:
         raise ValueError("Invalid metric!")

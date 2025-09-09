@@ -9,19 +9,26 @@ import numpy as np
 import sklearn.metrics
 import time
 from datetime import datetime
-from evaluation.utils_mahalanobis import align_labels_via_hungarian_algorithm
-from evaluation.utils_mahalanobis import get_embedding, KMedoid, compute_class_center_medium_similarity
-from evaluation.utils_mahalanobis import filter_sequences
+
+from scipy.constants import precision
+
+from evaluation.utils import align_labels_via_hungarian_algorithm
+from evaluation.utils import get_embedding, KMedoid, compute_class_center_medium_similarity
+from evaluation.utils import filter_sequences
 
 csv.field_size_limit(sys.maxsize)
 csv.field_size_limit(sys.maxsize)
 MAX_SEQ_LEN = 20000
 MIN_SEQ_LEN = 2500
 MIN_ABUNDANCE_VALUE = 10
-FILTER_RATIO = 0 #0.05
 
 
 def main(args):
+
+    # Check if the filtering strategy and ratio are consistent
+    if (args.filter_strategy == "" and args.filter_ratio > 0) or (args.filter_strategy != "" and args.filter_ratio == 0):
+        raise ValueError("If filter_strategy is chosen, filter_ratio must be > 0 and vice versa")
+
     model_list = args.model_list.split(",")
     for model_name in model_list:
         for species in args.species.split(","):
@@ -38,13 +45,15 @@ def main(args):
                 # =================== Compute the threshold value required for the k-Medoid algorithm ==================
                 ########################################################################################################
                 # Load the clustering data to compute similarity threshold
-                # init_time = time.time()
+                init_time = time.time()
                 clustering_data_file_path = os.path.join(args.data_dir, species, f"clustering_0.tsv")
 
                 dna_sequences, labels = filter_sequences(
                     data_path=clustering_data_file_path, model_path=args.model_path,
-                    shorten=MAX_SEQ_LEN, min_len = 0, abundance = 0, filter_ratio = 0, metric = None
+                    shorten=MAX_SEQ_LEN, min_len = 0, abundance = 0,
+                    filter_ratio=args.filter_ratio, filter_strategy=args.filter_strategy,
                 )
+                print(f"+ Initial filtering of clustering_0.tsv was done in {time.time() - init_time:.2f} seconds")
 
                 # # Define the embedding/feature file path. If file exist, we don't need to recompute the dna embeddings
                 cluster_embs_file_path = ""
@@ -71,14 +80,15 @@ def main(args):
                 # ========================================= Evaluate the model =========================================
                 ########################################################################################################
                 # Load binning data
-                # init_time = time.time()
+                init_time = time.time()
                 data_file = os.path.join(args.data_dir, species, f"binning_{sample_id}.tsv")
 
                 dna_sequences, labels_bin = filter_sequences(
                     data_path=data_file, model_path=args.model_path,
                     shorten=MAX_SEQ_LEN, min_len=MIN_SEQ_LEN, abundance=MIN_ABUNDANCE_VALUE,
-                    filter_ratio=FILTER_RATIO, metric=metric
+                    filter_ratio = args.filter_ratio, filter_strategy = args.filter_strategy,
                 )
+                print(f"+ Initial filtering of binning_{sample_id}.tsv was done in {time.time() - init_time:.2f} seconds")
 
                 # Define the embedding/feature file path. If the file exist, we don't recompute the dna embeddings
                 embedding_file_path = ""
@@ -108,22 +118,34 @@ def main(args):
                 alignment_bin = align_labels_via_hungarian_algorithm(true_labels_bin, predicted_labels)
                 predicted_labels_bin = [alignment_bin[label] for label in predicted_labels]
 
-                # Calculate purity, completeness, recall, and ARI
+                # Calculate the precision
+                precision_bin = sklearn.metrics.precision_score(
+                    true_labels_bin, predicted_labels_bin, average=None, zero_division=0
+                )
+                precision_bin.sort()
+
+                # Calculate the recall
                 recall_bin = sklearn.metrics.recall_score(
                     true_labels_bin, predicted_labels_bin, average=None, zero_division=0
                 )
                 recall_bin.sort()
 
-                f1_bin = sklearn.metrics.f1_score(true_labels_bin, predicted_labels_bin, average=None, zero_division=0)
+                # calculate the f1 score
+                f1_bin = sklearn.metrics.f1_score(
+                    true_labels_bin, predicted_labels_bin, average=None, zero_division=0
+                )
                 f1_bin.sort()
+
+                # Define the threshold values
                 thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-                recall_results = []
-                f1_results = []
+                precision_results, recall_results, f1_results = [], [], []
                 for threshold in thresholds:
+                    precision_results.append(precision_bin[precision_bin > threshold].shape[0])
                     recall_results.append(len(np.where(recall_bin > threshold)[0]))
                     f1_results.append(len(np.where(f1_bin > threshold)[0]))
 
                 print(f"+ f1_results: {f1_results}")
+                print(f"+ precision_results: {precision_results}")
                 print(f"+ recall_results: {recall_results} \n")
 
                 with open(args.output, 'a+') as f:
@@ -158,7 +180,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--model_list', type=str, default="dnaberts",
-        help='List of models to evaluate, separated by comma. Currently support [tnf, tnf-k, dnabert2, hyenadna, nt, dnaberts, kmerprofile, vib]'
+        help='List of models to evaluate, separated by comma. Currently support [tnf, tnf-k, dnabert2, hyenadna, nt, dnaberts, kmerprofile, ours]'
     )
     parser.add_argument('--data_dir', type=str, default=None, help='Data directory')
     parser.add_argument(
@@ -173,5 +195,14 @@ if __name__ == "__main__":
         '--chunk_size', type=int, default=0,
         help="Defines the size of the chunk to be used for the similarity matrix computation"
     )
+    parser.add_argument(
+        '--filter_strategy', type=int, default="after",
+        help="Defines the filtering strategy to be used (before or after clustering)"
+    )
+    parser.add_argument(
+        '--filter_ratio', type=float, default=0,
+        help="Filter ratio to be used (0 means no filtering)"
+    )
+
     args = parser.parse_args()
     main(args)
