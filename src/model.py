@@ -5,7 +5,6 @@ import random
 import argparse
 import itertools
 import numpy as np
-import pandas as pd
 from torch import device
 from functools import partial
 from torch.utils.tensorboard import SummaryWriter
@@ -30,13 +29,6 @@ def log1mexp(x: torch.Tensor):
     return torch.where(
         x < log2, torch.log(-torch.expm1(-x)), torch.log1p(-torch.exp(-x))
     )
-
-def get_reverse_complement(seq: str):
-    """
-    Get the reverse complement of a DNA sequence
-    """
-    complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
-    return ''.join(complement.get(base, base) for base in reversed(seq))
 
 class KmerConverter:
     def __init__(self, k):
@@ -70,7 +62,6 @@ class PairDataset(Dataset):
         """
         PairDataset constructor
         """
-        print("Creative Multi View Sampling Strategy - Nonoverlapping 3 Parts")
         # Set the parameters
         self.__kmers = None # A tensor of shape N x D, storing the k-mer profiles
         self.__indices = None # A tensor of shape L x 2, storing the indices of the positive and negative pairs
@@ -97,17 +88,24 @@ class PairDataset(Dataset):
         else:
             chosen_lines = list(range(num_of_lines))
 
-        # Read only the chosen lines if specified
-        if chosen_lines > 0:
-            lines = pd.read_csv(file_path, sep=',', header=None).iloc[chosen_lines].values.tolist()
         # Read the file
+        chosen_line_idx = 0
         left_kmer_profiles, right_kmer_profiles = [], []
-        for line in lines:
-            left_seq, right_seq = line[0], line[1]
+        f = open(file_path, 'r')
+        for line_no, line in enumerate(f):
 
-            # Split the full sequence into three parts
-            left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
-            right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
+            if line_no == chosen_lines[chosen_line_idx]:
+                left_seq, right_seq = line.strip().split(',')
+
+                left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
+                right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
+
+                # Increment the chosen_line_idx
+                chosen_line_idx += 1
+                # If all the chosen lines have been read, then break
+                if chosen_line_idx >= len(chosen_lines):
+                    break
+        f.close()
 
         # Combine the left and right k-mer profiles.
         # The first half of the profiles are the left ones and the second half are the right ones
@@ -381,15 +379,14 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
                 if 'std' in name:
                     param.requires_grad = True
                     std_params.append(param)
-            # std_params = model.parameters()
+
             # Set the include_std to True
             include_std = True
             # Define the optimizer
             optimizer = torch.optim.Adam(std_params, lr=lr/1e2)
             # Define the loss function
             criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
-            print(f"\t- Now including the std weights in the training (epoch {current_epoch+1})")
-
+            print(f"   - Only the covariance parameters are included in the optimizer now! (lr = {lr/1e2})")
 
         ## Run the training for the current epoch
         init_time = time.time()
@@ -399,12 +396,14 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
         loss_time = time.time() - init_time
         if distributed:
             if device == 0:
-                summary_writer.add_scalar('Loss/train', loss, current_epoch)
-                summary_writer.add_scalar('Time/epoch', loss_time, current_epoch)
+                if summary_writer is not None:
+                    summary_writer.add_scalar('Loss/train', loss, current_epoch)
+                    summary_writer.add_scalar('Time/epoch', loss_time, current_epoch)
                 print(f"\t- Epoch: {current_epoch+1}/{epoch_num} - Loss: {loss} ({loss_time:.2f} secs)")
         else:
-            summary_writer.add_scalar('Loss/train', loss, current_epoch)
-            summary_writer.add_scalar('Time/epoch', loss_time, current_epoch)
+            if summary_writer is not None:
+                summary_writer.add_scalar('Loss/train', loss, current_epoch)
+                summary_writer.add_scalar('Time/epoch', loss_time, current_epoch)
             print(f"\t- Epoch: {current_epoch+1}/{epoch_num} - Loss: {loss} ({loss_time:.2f} secs)")
 
         ## Save the checkpoint if necessary
@@ -423,7 +422,7 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             print(f"Model saved to {output_path}")
     else:
         model.save(output_path)
-        print(f"Model saved to {output_path}")
+        print(f"+ Model saved to {output_path}")
     print(f"\t- Completed (Device {device}).")
 
 def main_worker(
@@ -473,7 +472,8 @@ def main_worker(
     )
 
     # Close the summary writer
-    summary_writer.close()
+    if summary_writer is not None:
+        summary_writer.close()
 
     # Terminate the processes
     if distributed:
@@ -486,7 +486,7 @@ def main_worker(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train the model')
     parser.add_argument('--input', type=str, help='Input sequence file', required=True)
-    parser.add_argument('--output_path', type=str, help='Model file path to save', required=True)
+    parser.add_argument('--output', type=str, help='Model file path to save', required=True)
     parser.add_argument('--k', type=int, default=4, help='k value')
     parser.add_argument('--out_dim', type=int, default=256, help='dimension value')
     parser.add_argument('--neg_sample_per_pos', type=int, default=1000, help='Negative sample ratio')
@@ -522,15 +522,25 @@ if __name__ == "__main__":
 
 
     print(f"+ Information")
+    # Get the model name from the output path
+    print(f"\t- k value: {args.k}")
+    print(f"\t- Loss name: {args.loss_name}")
+    print(f"\t- Epoch number: {args.epoch}")
+    print(f"\t- Batch size: {args.batch_size}")
+    print(f"\t- Learning rate: {args.lr}")
+    print(f"\t- Output dimension: {args.out_dim}")
+    print(f"\t- Negative sample per positive pair: {args.neg_sample_per_pos}")
+    print(f"\t- Maximum number of sequence pairs to use: {args.max_seq_num}")
     if args.distributed:
         print(f"\t- Distributed training is activated with {world_size} GPUs")
     else:
         print(f"\t- No distributed training")
         print(f"\t- Device: {device}")
-    print(f"\t- Loss function: {args.loss_name}")
-    print(f"\t- Batch size: {args.batch_size}")
+    print(f"\t- Number of data loading workers: {args.workers}")
+    print(f"\t- Seed value: {args.seed}")
+    print(f"\t- Output model name: {os.path.basename(args.output)}")
     arguments = (
-        world_size, args.distributed, args.input, args.output_path, args.neg_sample_per_pos, args.max_seq_num,
+        world_size, args.distributed, args.input, args.output, args.neg_sample_per_pos, args.max_seq_num,
         args.k, args.out_dim, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,
         args.log_dir, args.seed,
     )
@@ -538,4 +548,4 @@ if __name__ == "__main__":
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
     else:
         main_worker(*((device,) + arguments))
-    print("Completed.")
+    print("+ Completed.")
