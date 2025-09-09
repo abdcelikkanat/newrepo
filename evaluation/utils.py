@@ -477,14 +477,14 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
         if isinstance(features1, tuple):
             features1, features2 = features1[0], features2[0]
 
-        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.)**2)
+        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.))
 
-    elif metric == "euclidean":
+    elif metric == "squared_l2":
 
         if isinstance(features1, tuple):
             features1, features2 = features1[0], features2[0]
 
-        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.))
+        similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.)**2)
 
     else:
         raise ValueError("Invalid metric!")

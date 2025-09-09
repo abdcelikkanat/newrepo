@@ -81,19 +81,20 @@ def main(args):
                 dna_sequences, labels_bin = filter_sequences(
                     data_path=data_file, shorten=MAX_SEQ_LEN, min_len=MIN_SEQ_LEN, abundance=MIN_ABUNDANCE_VALUE,
                 )
-                # Relabel the string labels to integer labels
-                labels_bin = convert_labels2int(labels_bin)
                 # Clean the sequences that have the largest minimum covariances
                 if args.filter_ratio > 0:
                     selected_idx = clean_by_variance(
                         dna_sequences, model_path=args.model_path, filter_ratio=args.filter_ratio
                     )
+
                 # Clean the sequences if the strategy is before the clustering step
                 if args.filter_ratio > 0 and args.filter_strategy == "before":
                     print(f"\t+ Cleaning the sequences before the clustering step (Ratio: {args.filter_ratio})")
                     print(f"\t- {len(selected_idx)} sequences left out of {len(dna_sequences)}")
                     dna_sequences = [dna_sequences[i] for i in selected_idx]
                     labels_bin = np.asarray(labels_bin)[selected_idx]
+                # Relabel the string labels to integer labels
+                labels_bin = convert_labels2int(labels_bin)
 
                 print(f"+ Initial filtering of binning_{sample_id}.tsv was done in {time.time() - init_time:.2f} seconds")
 
@@ -215,7 +216,7 @@ if __name__ == "__main__":
         help="Defines the size of the chunk to be used for the similarity matrix computation"
     )
     parser.add_argument(
-        '--filter_strategy', type=int, default="after",
+        '--filter_strategy', type=str, default="",
         help="Defines the filtering strategy to be used (before or after clustering)"
     )
     parser.add_argument(

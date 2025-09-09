@@ -386,7 +386,8 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             optimizer = torch.optim.Adam(std_params, lr=lr/1e2)
             # Define the loss function
             criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
-            print(f"   - Only the covariance parameters are included in the optimizer now! (lr = {lr/1e2})")
+            if device == 0:
+                print(f"   - Only the covariance parameters are included in the optimizer now! (lr = {lr/1e2})")
 
         ## Run the training for the current epoch
         init_time = time.time()
@@ -408,12 +409,22 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
 
         ## Save the checkpoint if necessary
         if save_every > 0 and (current_epoch + 1) % save_every == 0:
+
+
             # Get the folder path of the output file and define the checkpoint path
             checkpoint_path = os.path.join(output_path+f".epoch_{current_epoch+1}.checkpoint")
             if distributed:
                 if device == 0:
+                    # Get the target folder path and if it does not exist, create it
+                    if not os.path.exists(os.path.dirname(output_path)):
+                        os.makedirs(os.path.dirname(output_path))
+
                     model.module.save(checkpoint_path)
             else:
+                # Get the target folder path and if it does not exist, create it
+                if not os.path.exists(os.path.dirname(output_path)):
+                    os.makedirs(os.path.dirname(output_path))
+
                 model.save(checkpoint_path)
 
     if distributed:
@@ -426,9 +437,8 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
     print(f"\t- Completed (Device {device}).")
 
 def main_worker(
-        device, world_size, distributed:bool, input_file_path: str, output_path: str, neg_sample_per_pos: int,
-        max_seq_num: int, k: int, out_dim: int, lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int,
-        loss_name: str, log_dir:str, seed: int,
+        device, world_size, distributed:bool, training_dataset: PairDataset, output_path: str, k: int, out_dim: int,
+        lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int, loss_name: str, log_dir:str, seed: int,
 ):
     ### Initialize the device
     if distributed:
@@ -437,14 +447,10 @@ def main_worker(
             os.environ["MASTER_ADDR"] = "localhost"
         if "MASTER_PORT" not in os.environ:
             os.environ["MASTER_PORT"] = "12355"
-        print(f"+ MASTER_ADDR: {os.environ['MASTER_ADDR']} and MASTER_PORT: {os.environ['MASTER_PORT']}")
+        print(f"+ Device: {device} | MASTER_ADDR: {os.environ['MASTER_ADDR']} | MASTER_PORT: {os.environ['MASTER_PORT']}")
         torch.cuda.set_device(device)
         torch.distributed.init_process_group(backend='nccl', rank=device, world_size=world_size)
 
-    ### Read the dataset and construct the data loader
-    training_dataset = PairDataset(
-        file_path=input_file_path, k=k, neg_sample_per_pos=neg_sample_per_pos, max_seq_num=max_seq_num, seed=seed
-    )
     # Define a DataLoader that iterates through batches of data.
     training_loader = DataLoader(
         training_dataset, batch_size=batch_size, num_workers=workers_num, pin_memory=True,
@@ -539,10 +545,16 @@ if __name__ == "__main__":
     print(f"\t- Number of data loading workers: {args.workers}")
     print(f"\t- Seed value: {args.seed}")
     print(f"\t- Output model name: {os.path.basename(args.output)}")
+
+    ### Read the dataset and construct the data loader
+    training_dataset = PairDataset(
+        file_path=args.input, k=args.k, neg_sample_per_pos=args.neg_sample_per_pos, max_seq_num=args.max_seq_num,
+        seed=args.seed
+    )
+    # Define the arguments for the main worker function
     arguments = (
-        world_size, args.distributed, args.input, args.output, args.neg_sample_per_pos, args.max_seq_num,
-        args.k, args.out_dim, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,
-        args.log_dir, args.seed,
+        world_size, args.distributed, training_dataset, args.output, args.k, args.out_dim, args.lr, args.epoch,
+        args.batch_size, args.workers, args.save_every, args.loss_name, args.log_dir, args.seed,
     )
     if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
