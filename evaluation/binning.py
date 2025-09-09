@@ -9,14 +9,16 @@ import numpy as np
 import sklearn.metrics
 import time
 from datetime import datetime
-from evaluation.utils import align_labels_via_hungarian_algorithm
-from evaluation.utils import get_embedding, KMedoid, compute_class_center_medium_similarity
+from evaluation.utils_mahalanobis import align_labels_via_hungarian_algorithm
+from evaluation.utils_mahalanobis import get_embedding, KMedoid, compute_class_center_medium_similarity
+from evaluation.utils_mahalanobis import filter_sequences
 
 csv.field_size_limit(sys.maxsize)
 csv.field_size_limit(sys.maxsize)
 MAX_SEQ_LEN = 20000
 MIN_SEQ_LEN = 2500
 MIN_ABUNDANCE_VALUE = 10
+FILTER_RATIO = 0 #0.05
 
 
 def main(args):
@@ -36,22 +38,13 @@ def main(args):
                 # =================== Compute the threshold value required for the k-Medoid algorithm ==================
                 ########################################################################################################
                 # Load the clustering data to compute similarity threshold
-                init_time = time.time()
+                # init_time = time.time()
                 clustering_data_file_path = os.path.join(args.data_dir, species, f"clustering_0.tsv")
-                with open(clustering_data_file_path, "r") as f:
-                    reader = csv.reader(f, delimiter="\t")
-                    data = list(reader)[1:]
-                print(f"\t- Reading clustering data file (done in {time.time() - init_time:.2f} seconds)")
 
-                # Shorten the sequences if they are longer than the MAX_SEQ_LEN value
-                dna_sequences = [d[0][:MAX_SEQ_LEN] for d in data]
-                labels = [d[1] for d in data]
-
-                # Convert the sequence labels to numeric values
-                label2id = {l: i for i, l in enumerate(set(labels))}
-                labels = np.array([label2id[l] for l in labels])
-                num_clusters = len(label2id)
-                print(f"\t- Clustering data contains {len(dna_sequences)} sequences with {num_clusters} clusters.")
+                dna_sequences, labels = filter_sequences(
+                    data_path=clustering_data_file_path, model_path=args.model_path,
+                    shorten=MAX_SEQ_LEN, min_len = 0, abundance = 0, filter_ratio = 0, metric = None
+                )
 
                 # # Define the embedding/feature file path. If file exist, we don't need to recompute the dna embeddings
                 cluster_embs_file_path = ""
@@ -78,33 +71,14 @@ def main(args):
                 # ========================================= Evaluate the model =========================================
                 ########################################################################################################
                 # Load binning data
-                init_time = time.time()
+                # init_time = time.time()
                 data_file = os.path.join(args.data_dir, species, f"binning_{sample_id}.tsv")
-                with open(data_file, "r") as f:
-                    reader = csv.reader(f, delimiter="\t")
-                    data = list(reader)[1:]
-                print(f"+ Reading the binning file (binning_{sample_id}.tsv) ({time.time() - init_time:.2f} seconds)")
 
-                # Get the dna sequences nd labels, and shorten the sequences whose length is longer than 'MAX_SEQ_LEN'
-                dna_sequences = [d[0][:MAX_SEQ_LEN] for d in data]
-                labels_bin = [d[1] for d in data]
-
-                # Filter sequences with length < 2500
-                filterd_idx = [i for i, seq in enumerate(dna_sequences) if len(seq) >= MIN_SEQ_LEN]
-                dna_sequences = [dna_sequences[i] for i in filterd_idx]
-                labels_bin = [labels_bin[i] for i in filterd_idx]
-
-                # Filter sequences with low abundance labels (less than 10)
-                label_counts = collections.Counter(labels_bin)
-                filterd_idx = [i for i, l in enumerate(labels_bin) if label_counts[l] >= MIN_ABUNDANCE_VALUE]
-                dna_sequences = [dna_sequences[i] for i in filterd_idx]
-                labels_bin = [labels_bin[i] for i in filterd_idx]
-
-                # Convert labels to numeric values
-                label2id = {l: i for i, l in enumerate(set(labels_bin))}
-                labels_bin = np.array([label2id[l] for l in labels_bin])
-                num_clusters = len(label2id)
-                print(f"\t- Get {len(dna_sequences)} sequences, {num_clusters} clusters")
+                dna_sequences, labels_bin = filter_sequences(
+                    data_path=data_file, model_path=args.model_path,
+                    shorten=MAX_SEQ_LEN, min_len=MIN_SEQ_LEN, abundance=MIN_ABUNDANCE_VALUE,
+                    filter_ratio=FILTER_RATIO, metric=metric
+                )
 
                 # Define the embedding/feature file path. If the file exist, we don't recompute the dna embeddings
                 embedding_file_path = ""
