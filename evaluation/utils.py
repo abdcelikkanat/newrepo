@@ -7,6 +7,7 @@ import torch.utils.data as util_data
 import torch.nn as nn
 import tqdm
 import os
+import time
 import collections
 from scipy.spatial import distance
 import itertools
@@ -19,7 +20,31 @@ from scipy.optimize import linear_sum_assignment
 #     "tnf": 100, "tnf_k": 100, "hyenadna": 100, "dnabert2": 20, "nt": 64, "dnaberts": 20,
 # }
 
-def filter_sequences(data_path, model_path, shorten, min_len=0, abundance=0, filter_ratio=0, filter_strategy="before"):
+def clean_by_variance(dna_sequences, model_path, filter_ratio):
+
+    # Filter the sequences that have the largest minimum covariances
+    kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
+    model = Model(**kwargs)
+    model.load_state_dict(model_state_dict)
+    # Get the mean and stds
+    _, covs = model.seq2emb(dna_sequences)
+
+    # Get the sorted indices of the stds
+    sorted_idx = np.argsort(np.min(covs, axis=1))
+    selected_idx = sorted_idx[:int((1 - filter_ratio) * len(covs))]
+    print(f"The data had {len(sorted_idx)} sequences and {len(selected_idx)} remained after cleaning by variances!")
+
+    return selected_idx
+
+def convert_labels2int(labels):
+
+    # Convert the sequence labels to numeric values
+    label2id = {l: i for i, l in enumerate(set(labels))}
+    int_labels = np.array([label2id[l] for l in labels])
+
+    return int_labels
+
+def filter_sequences(data_path, shorten, min_len=0, abundance=0):
 
     import csv
 
@@ -47,29 +72,9 @@ def filter_sequences(data_path, model_path, shorten, min_len=0, abundance=0, fil
         dna_sequences = [dna_sequences[i] for i in filterd_idx]
         labels = [labels[i] for i in filterd_idx]
 
-    # Filter the sequences that have the largest minimum covariances
-    if filter_ratio > 0 and filter_strategy == "before":
+    print(f"+ After filtering, there are {len(dna_sequences)} sequences from {len(set(labels))} classes.")
 
-        kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
-        model = Model(**kwargs)
-        model.load_state_dict(model_state_dict)
-        # Get the mean and stds
-        _, covs = model.seq2emb(dna_sequences)
-
-        # Get the sorted indices of the stds
-        sorted_idx = np.argsort( np.min(covs, axis=1) )
-        selected_idx = sorted_idx[:int((1-filter_ratio) * len(covs))]
-        print(f"We had {len(sorted_idx)} sequences and {len(selected_idx)} remained!")
-        dna_sequences = [dna_sequences[i] for i in selected_idx]
-        labels = np.asarray(labels)[selected_idx]
-
-    # Convert the sequence labels to numeric values
-    label2id = {l: i for i, l in enumerate(set(labels))}
-    labels = np.array([label2id[l] for l in labels])
-    num_clusters = len(label2id)
-    print(f"Data file contain {len(dna_sequences)} sequences with {num_clusters} clusters.")
-
-    return np.asarray(dna_sequences).tolist(), labels
+    return dna_sequences, labels
 
 def log1mexp(x):
     log2 = np.log(2)

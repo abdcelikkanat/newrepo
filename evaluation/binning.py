@@ -4,20 +4,14 @@ import csv
 import argparse
 import os
 import sys
-import collections
 import numpy as np
 import sklearn.metrics
 import time
 from datetime import datetime
-
-from scipy.constants import precision
-
 from evaluation.utils import align_labels_via_hungarian_algorithm
 from evaluation.utils import get_embedding, KMedoid, compute_class_center_medium_similarity
-from evaluation.utils import filter_sequences
+from evaluation.utils import filter_sequences, convert_labels2int, clean_by_variance
 
-csv.field_size_limit(sys.maxsize)
-csv.field_size_limit(sys.maxsize)
 MAX_SEQ_LEN = 20000
 MIN_SEQ_LEN = 2500
 MIN_ABUNDANCE_VALUE = 10
@@ -49,10 +43,10 @@ def main(args):
                 clustering_data_file_path = os.path.join(args.data_dir, species, f"clustering_0.tsv")
 
                 dna_sequences, labels = filter_sequences(
-                    data_path=clustering_data_file_path, model_path=args.model_path,
-                    shorten=MAX_SEQ_LEN, min_len = 0, abundance = 0,
-                    filter_ratio=args.filter_ratio, filter_strategy=args.filter_strategy,
+                    data_path=clustering_data_file_path, shorten=MAX_SEQ_LEN, min_len = 0, abundance = 0,
                 )
+                # Convert the string labels to integer labels
+                labels = convert_labels2int(labels)
                 print(f"+ Initial filtering of clustering_0.tsv was done in {time.time() - init_time:.2f} seconds")
 
                 # # Define the embedding/feature file path. If file exist, we don't need to recompute the dna embeddings
@@ -83,11 +77,24 @@ def main(args):
                 init_time = time.time()
                 data_file = os.path.join(args.data_dir, species, f"binning_{sample_id}.tsv")
 
+                # Filter the sequences based on the minimum length and abundance
                 dna_sequences, labels_bin = filter_sequences(
-                    data_path=data_file, model_path=args.model_path,
-                    shorten=MAX_SEQ_LEN, min_len=MIN_SEQ_LEN, abundance=MIN_ABUNDANCE_VALUE,
-                    filter_ratio = args.filter_ratio, filter_strategy = args.filter_strategy,
+                    data_path=data_file, shorten=MAX_SEQ_LEN, min_len=MIN_SEQ_LEN, abundance=MIN_ABUNDANCE_VALUE,
                 )
+                # Relabel the string labels to integer labels
+                labels_bin = convert_labels2int(labels_bin)
+                # Clean the sequences that have the largest minimum covariances
+                if args.filter_ratio > 0:
+                    selected_idx = clean_by_variance(
+                        dna_sequences, model_path=args.model_path, filter_ratio=args.filter_ratio
+                    )
+                # Clean the sequences if the strategy is before the clustering step
+                if args.filter_ratio > 0 and args.filter_strategy == "before":
+                    print(f"\t+ Cleaning the sequences before the clustering step (Ratio: {args.filter_ratio})")
+                    print(f"\t- {len(selected_idx)} sequences left out of {len(dna_sequences)}")
+                    dna_sequences = [dna_sequences[i] for i in selected_idx]
+                    labels_bin = np.asarray(labels_bin)[selected_idx]
+
                 print(f"+ Initial filtering of binning_{sample_id}.tsv was done in {time.time() - init_time:.2f} seconds")
 
                 # Define the embedding/feature file path. If the file exist, we don't recompute the dna embeddings
@@ -108,6 +115,18 @@ def main(args):
                     features, min_similarity=threshold, min_bin_size=10,
                     max_iter=1000, metric=metric, chunk_size=args.chunk_size
                 )
+                # Clean the sequences if the strategy is after the clustering step
+                if args.filter_ratio > 0 and args.filter_strategy == "after":
+                    counter = 0
+                    for i in selected_idx:
+                        if binning_results[i] != -1:
+                            counter += 1
+                        binning_results[i] = -1
+                    print(f"\t+ Cleaning the sequences after the clustering step (Ratio: {args.filter_ratio})")
+                    print(f"\t- {len(selected_idx)} sequences have been determined as outliers by variance")
+                    print(f"\t- {counter} sequences among them have been also determined as outliers by the clustering algorithm")
+
+
                 print(f"\t- Computing the binning results (done in {time.time() - init_time:.2f} seconds)")
                 # Get the number of true labels and predicted labels
                 true_labels_bin = labels_bin[binning_results != -1]
