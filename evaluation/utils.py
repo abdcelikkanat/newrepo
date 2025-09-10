@@ -260,7 +260,7 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
 
         if iter_count == max_iter:
             break
-        print(f"Iteration {iter_count} with {np.sum(p == -1)} unassigned elements")
+        # print(f"Iteration {iter_count} with {np.sum(p == -1)} unassigned elements")
 
         # Select the seed index, i.e. medoid index (Line 4)
         s = np.argmax(row_sum)
@@ -299,7 +299,7 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
             p[selected_idx] = iter_count
             row_sum -= np.sum(similarities[:, selected_idx], axis=1)
             row_sum[selected_idx] = 0
-            # print(f"Current label: {iter_count}, Number of assigned elements: {len(selected_idx)}")
+            print(f"Current label: {iter_count}, Number of assigned elements: {len(selected_idx)}")
         else:
             raise ValueError("No selected index")
 
