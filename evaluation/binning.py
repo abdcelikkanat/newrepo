@@ -120,7 +120,7 @@ def main(args):
                 if args.filter_ratio > 0 and args.filter_strategy == "after":
                     idx = 0
                     sorted_selected_indices = sorted(selected_idx)
-                    for i in range(binning_results):
+                    for i in range(len(binning_results)):
                         if i == sorted_selected_indices[idx]:
                             idx += 1
                         else:

@@ -299,7 +299,7 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
             p[selected_idx] = iter_count
             row_sum -= np.sum(similarities[:, selected_idx], axis=1)
             row_sum[selected_idx] = 0
-            print(f"Current label: {iter_count}, Number of assigned elements: {len(selected_idx)}")
+            # print(f"Current label: {iter_count}, Number of assigned elements: {len(selected_idx)}")
         else:
             raise ValueError("No selected index")
 
