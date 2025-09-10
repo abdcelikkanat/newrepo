@@ -163,6 +163,26 @@ def main(args):
                 )
                 f1_bin.sort()
 
+                # If the confusion matrix path is given, save the confusion matrix and true/predicted labels
+                if args.confusion_matrix_path != "":
+                    os.makedirs(args.confusion_matrix_path, exist_ok=True)
+                    confusion_matrix = sklearn.metrics.confusion_matrix(true_labels_bin, predicted_labels_bin)
+                    np.savetxt(
+                        os.path.join(
+                            args.confusion_matrix_path,
+                            f"confusion_matrix_model-{model_name}_species-{species}_sample-{sample_id}.tsv"
+                        ),
+                        confusion_matrix, delimiter="\t"
+                    )
+                    # Save the true and predicted labels as numpy arrays
+                    np.savez(
+                        os.path.join(
+                            args.confusion_matrix_path,
+                            f"true_predicted_labels_model-{model_name}_species-{species}_sample-{sample_id}.npz"
+                        ),
+                        true_labels=true_labels_bin, predicted_labels=predicted_labels_bin
+                    )
+
                 # Define the threshold values
                 thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
                 precision_results, recall_results, f1_results = [], [], []
@@ -230,6 +250,11 @@ if __name__ == "__main__":
         '--filter_ratio', type=float, default=0,
         help="Filter ratio to be used (0 means no filtering)"
     )
+    parser.add_argument(
+        '--confusion_matrix_path', type=str, default="",
+        help="Path to save the confusion matrix (if given)"
+    )
+
 
     args = parser.parse_args()
     main(args)
