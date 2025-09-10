@@ -1,9 +1,9 @@
 
 # Define the global variables
-BASEFOLDER=$1
-PYTHON=$2
-SCRIPT_PATH=$3
-INPUT_PATH=$4
+#BASEFOLDER=$1
+#PYTHON=$2
+#SCRIPT_PATH=$3
+#INPUT_PATH=$4
 
 # Model Parameters
 NAME=model
@@ -41,4 +41,5 @@ if [ -e ${OUTPUT_PATH} ]; then
 else
     $CMD
 fi
+
 
