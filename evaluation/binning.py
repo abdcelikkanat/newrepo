@@ -167,19 +167,10 @@ def main(args):
                 if args.confusion_matrix_path != "":
                     os.makedirs(args.confusion_matrix_path, exist_ok=True)
                     confusion_matrix = sklearn.metrics.confusion_matrix(true_labels_bin, predicted_labels_bin)
-                    np.savetxt(
-                        os.path.join(
-                            args.confusion_matrix_path,
-                            f"confusion_matrix_model-{model_name}_species-{species}_sample-{sample_id}.tsv"
-                        ),
-                        confusion_matrix, delimiter="\t"
-                    )
+                    np.savetxt(args.confusion_matrix_path, confusion_matrix, delimiter="\t")
                     # Save the true and predicted labels as numpy arrays
                     np.savez(
-                        os.path.join(
-                            args.confusion_matrix_path,
-                            f"true_predicted_labels_model-{model_name}_species-{species}_sample-{sample_id}.npz"
-                        ),
+                        args.confusion_matrix_path + "true_predicted_labels_model.npz",
                         true_labels=true_labels_bin, predicted_labels=predicted_labels_bin
                     )
 
