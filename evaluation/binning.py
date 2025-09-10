@@ -169,7 +169,7 @@ def main(args):
                     np.savetxt(args.confusion_matrix_path, confusion_matrix, delimiter="\t")
                     # Save the true and predicted labels as numpy arrays
                     np.savez(
-                        args.confusion_matrix_path + "true_predicted_labels_model.npz",
+                        args.confusion_matrix_path + "_true_predicted_labels_model.npz",
                         true_labels=true_labels_bin, predicted_labels=predicted_labels_bin
                     )
 
