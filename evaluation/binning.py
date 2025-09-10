@@ -118,14 +118,21 @@ def main(args):
                 )
                 # Clean the sequences if the strategy is after the clustering step
                 if args.filter_ratio > 0 and args.filter_strategy == "after":
-                    counter = 0
-                    for i in selected_idx:
-                        if binning_results[i] != -1:
-                            counter += 1
-                        binning_results[i] = -1
+                    idx = 0
+                    sorted_selected_indices = sorted(selected_idx)
+                    for i in range(binning_results):
+                        if i == sorted_selected_indices[idx]:
+                            idx += 1
+                        else:
+                            binning_results[i] = -1
+
+                        if idx == len(sorted_selected_indices):
+                            binning_results[i:] = [-1] * (len(binning_results) - i)
+                            break
+
                     print(f"\t+ Cleaning the sequences after the clustering step (Ratio: {args.filter_ratio})")
-                    print(f"\t- {len(selected_idx)} sequences have been determined as outliers by variance")
-                    print(f"\t- {counter} sequences among them have been also determined as outliers by the clustering algorithm")
+                    print(f"\t- In total, {len(binning_results) - len(selected_idx)} sequences have been determined as outliers by variance")
+                    print(f"\t- {sum(binning_results == -1) - len(selected_idx)} sequences among them have been also determined as outliers by the clustering algorithm")
 
 
                 print(f"\t- Computing the binning results (done in {time.time() - init_time:.2f} seconds)")
