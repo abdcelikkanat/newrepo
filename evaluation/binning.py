@@ -165,7 +165,6 @@ def main(args):
 
                 # If the confusion matrix path is given, save the confusion matrix and true/predicted labels
                 if args.confusion_matrix_path != "":
-                    os.makedirs(args.confusion_matrix_path, exist_ok=True)
                     confusion_matrix = sklearn.metrics.confusion_matrix(true_labels_bin, predicted_labels_bin)
                     np.savetxt(args.confusion_matrix_path, confusion_matrix, delimiter="\t")
                     # Save the true and predicted labels as numpy arrays
