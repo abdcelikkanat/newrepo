@@ -190,7 +190,8 @@ def main(args):
                     f.write(datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
                     f.write(f"model: {model_name}, species: {species}, sample_id: {sample_id}, binning\n")
                     f.write(f"recall_results: {recall_results}\n")
-                    f.write(f"f1_results: {f1_results}\n")
+                    f.write(f"precision_results: {f1_results}\n")
+                    f.write(f"f1_results: {precision_results}\n")
                     f.write(f"threshold: {threshold}\n\n")
 
 
