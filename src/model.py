@@ -342,14 +342,20 @@ def train_single_epoch(device, model, criterion, optimizer, data_loader):
 
     return average_epoch_loss
 
-def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path, summary_writer):
+def train(
+        device, distributed, model, strategy, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path,
+        summary_writer
+):
+    # Check the strategy name
+    assert strategy in ["sequential", "mean_only", "var_only"], f"Unknown strategy name: {strategy}"
 
     ### Define the optimizer
     # At the beginning, we will not train the standard deviation parameters so we will not include them in the optimizer
-    include_std = False
+    include_std = False if strategy in ["sequential", "mean_only"] else True
+    # Get the model parameters to train
     model_params = []
     for name, param in model.named_parameters():
-        if 'std' in name:
+        if 'std' in name and (strategy in ["sequential", "mean_only"]):
             param.requires_grad = False
         else:
             model_params.append(param)
@@ -369,8 +375,8 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
         if distributed:
             data_loader.sampler.set_epoch(current_epoch)
 
-        # For the second half of the training, we will also train the std weights
-        if (current_epoch+1) > epoch_num * (1./ 2) and include_std == False:
+        # For the second half of the training, we will also train the std weights if the strategy is "sequential"
+        if (current_epoch+1) > epoch_num * (1./ 2) and include_std == False and strategy == "sequential":
 
             # # Set the gradient of the std weights to True
             std_params = []
@@ -383,11 +389,11 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
             # Set the include_std to True
             include_std = True
             # Define the optimizer
-            optimizer = torch.optim.Adam(std_params, lr=lr/1e2)
+            optimizer = torch.optim.Adam(std_params, lr=lr)
             # Define the loss function
             criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
-            if device == 0:
-                print(f"   - Only the covariance parameters are included in the optimizer now! (lr = {lr/1e2})")
+            if (distributed and device == 0) or (not distributed):
+                print(f"   - Only the covariance parameters are included in the optimizer now! (lr = {lr})")
 
         ## Run the training for the current epoch
         init_time = time.time()
@@ -409,7 +415,6 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
 
         ## Save the checkpoint if necessary
         if save_every > 0 and (current_epoch + 1) % save_every == 0:
-
 
             # Get the folder path of the output file and define the checkpoint path
             checkpoint_path = os.path.join(output_path+f".epoch_{current_epoch+1}.checkpoint")
@@ -437,8 +442,9 @@ def train(device, distributed, model, lr, loss_name, data_loader, epoch_num: int
     print(f"\t- Completed (Device {device}).")
 
 def main_worker(
-        device, world_size, distributed:bool, training_dataset: PairDataset, output_path: str, k: int, out_dim: int,
-        lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int, loss_name: str, log_dir:str, seed: int,
+        device, world_size, distributed:bool, training_dataset: PairDataset, output_path: str, checkpoint: str,
+        k: int, out_dim: int, strategy:str, lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int,
+        loss_name: str, log_dir:str, seed: int,
 ):
     ### Initialize the device
     if distributed:
@@ -460,6 +466,14 @@ def main_worker(
 
     ### Define the model
     model = Model(k=k, out_dim=out_dim, seed=seed)
+    if checkpoint != "":
+        print(f"+ Loading the model from the checkpoint: {checkpoint}")
+        # Load the model from the checkpoint
+        kwargs, model_state_dict = torch.load(checkpoint, map_location=torch.device("cpu"))
+        model = Model(**kwargs)
+        model.load_state_dict(model_state_dict)
+
+    # Move the model to the device
     if distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = DistributedDataParallel(model.to(f"cuda:{device}"), device_ids=[device], find_unused_parameters=True)
@@ -473,8 +487,9 @@ def main_worker(
 
     ### Train the model
     train(
-        device=device, distributed=distributed, model=model, lr=lr, loss_name=loss_name, data_loader=training_loader,
-        epoch_num=epoch_num, save_every=save_every, output_path=output_path, summary_writer=summary_writer,
+        device=device, distributed=distributed, model=model, strategy=strategy, lr=lr, loss_name=loss_name,
+        data_loader=training_loader, epoch_num=epoch_num, save_every=save_every, output_path=output_path,
+        summary_writer=summary_writer,
     )
 
     # Close the summary writer
@@ -493,18 +508,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train the model')
     parser.add_argument('--input', type=str, help='Input sequence file', required=True)
     parser.add_argument('--output', type=str, help='Model file path to save', required=True)
+    parser.add_argument('--checkpoint', type=str, default="", help='Checkpoint file path to load')
     parser.add_argument('--k', type=int, default=4, help='k value')
     parser.add_argument('--out_dim', type=int, default=256, help='dimension value')
-    parser.add_argument('--neg_sample_per_pos', type=int, default=1000, help='Negative sample ratio')
-    parser.add_argument('--max_seq_num', type=int, default=10000, help='Maximum number of sequences to get from the file')
-    parser.add_argument('--epoch', type=int, default=300, help='Epoch number')
+    parser.add_argument('--neg_sample_per_pos', type=int, default=200, help='Negative sample ratio')
+    parser.add_argument('--max_seq_num', type=int, default=100000, help='Maximum number of sequences to get from the file')
+    parser.add_argument('--epoch', type=int, default=100, help='Epoch number')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--strategy', type=str, default="sequential", help='Learning starting strategy (sequential, mean_only, var_only)')
     parser.add_argument('--batch_size', type=int, default=10000, help='Batch size (0: no batch)')
     parser.add_argument('--save_every', type=int, default=0, help='Save checkpoint every x epochs (0 for no checkpoint)')
-    parser.add_argument('--distributed', type=int, default=1)
+    parser.add_argument('--distributed', type=int, default=0, help='Use distributed training (0: no, 1: yes)')
     parser.add_argument('--device', type=str, default='cpu', help='Device to use (cpu, mps or gpu)')
-    parser.add_argument('--workers', type=int, default=2, help='Number of data loading workers')
-    parser.add_argument('--loss_name', type=str, default="vib_without_sampling", help='Loss function (bern, vib, non_stable_vib and vib_without_sampling)')
+    parser.add_argument('--workers', type=int, default=4, help='Number of data loading workers')
+    parser.add_argument('--loss_name', type=str, default="mahalanobis", help='Loss function (l2, mahalanobis)')
     parser.add_argument('--log_dir', type=str, default="", help='Path directory to save the log file')
     parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
 
@@ -537,6 +554,9 @@ if __name__ == "__main__":
     print(f"\t- Output dimension: {args.out_dim}")
     print(f"\t- Negative sample per positive pair: {args.neg_sample_per_pos}")
     print(f"\t- Maximum number of sequence pairs to use: {args.max_seq_num}")
+    if args.checkpoint != "":
+        print(f"\t- Checkpoint file: {args.checkpoint}")
+    print(f"\t- Learning starting strategy: {args.strategy}")
     if args.distributed:
         print(f"\t- Distributed training is activated with {world_size} GPUs")
     else:
@@ -553,8 +573,9 @@ if __name__ == "__main__":
     )
     # Define the arguments for the main worker function
     arguments = (
-        world_size, args.distributed, training_dataset, args.output, args.k, args.out_dim, args.lr, args.epoch,
-        args.batch_size, args.workers, args.save_every, args.loss_name, args.log_dir, args.seed,
+        world_size, args.distributed, training_dataset, args.output, args.checkpoint, args.k, args.out_dim,
+        args.strategy, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,
+        args.log_dir, args.seed,
     )
     if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
