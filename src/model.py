@@ -520,7 +520,7 @@ if __name__ == "__main__":
     parser.add_argument('--save_every', type=int, default=0, help='Save checkpoint every x epochs (0 for no checkpoint)')
     parser.add_argument('--distributed', type=int, default=0, help='Use distributed training (0: no, 1: yes)')
     parser.add_argument('--device', type=str, default='cpu', help='Device to use (cpu, mps or gpu)')
-    parser.add_argument('--workers', type=int, default=4, help='Number of data loading workers')
+    parser.add_argument('--workers', type=int, default=2, help='Number of data loading workers')
     parser.add_argument('--loss_name', type=str, default="mahalanobis", help='Loss function (l2, mahalanobis)')
     parser.add_argument('--log_dir', type=str, default="", help='Path directory to save the log file')
     parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
