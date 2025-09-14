@@ -210,7 +210,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--model_path', type=str, default="",
-        help='Directory to save trained models to test'
+        help='Path to the pretrained model (if required by the method)'
     )
     parser.add_argument(
         '--feature_folder', type=str, default="",
