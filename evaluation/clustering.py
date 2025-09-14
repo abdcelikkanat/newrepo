@@ -31,6 +31,7 @@ def main(args):
 
                 print("Computing the clustering results")
                 print(f"+ Model: {model_name} | Species: {species} | Sample ID: {sample_id} | Metric: {metric} | Chunk size: {args.chunk_size}")
+                print(f"+ Model path: {args.model_path}")
 
                 ########################################################################################################
                 # =================== Compute the threshold value required for the k-Medoid algorithm ==================
@@ -50,7 +51,7 @@ def main(args):
                 init_time = time.time()
                 features = get_embedding(
                     dna_sequences=dna_sequences, model_name=model_name, species=species, sample_id=0,
-                    k=args.k, model_path=args.model_path, embedding_file_path=None,
+                    k=args.k, model_path=args.model_path, embedding_file_path="",
                 )
                 print(f"\t- Computing the clustering file embeddings (done in {time.time() - init_time:.2f} seconds")
 
