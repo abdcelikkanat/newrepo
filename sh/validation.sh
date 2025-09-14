@@ -25,12 +25,11 @@ mkdir ${RESULTS_FOLDER}/plant
 fi
 
 # Define the evaluation parameters
-SPECIES_LIST=("marine")
-EPOCH_LIST=(5 20 35 50 65 80)
-DATA_DIR=${BASEFOLDER}/../../kadir/dataset/
+SPECIES_LIST=("reference")
+EPOCH_LIST=(5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95)
+DATA_DIR=~/Downloads/kum/dataset/ #-----${BASEFOLDER}/../../kadir/dataset/
 MODELLIST=ours
 METRIC="squared_l2"
-SAMPLE_IDS="5" #"5,6"
 CHUNK_SIZE=100
 POSTFIX=""
 
@@ -38,7 +37,7 @@ POSTFIX=""
 for EPOCH in ${EPOCH_LIST[@]}
 do
 #Define model path
-MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=100_lr=0.001_batch=10000_loss=mahalanobis_strategy=mean_only_seed=1_main_cpu.model"
+MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=100_lr=0.001_batch=10000_loss=mahalanobis_strategy=mean_only_seed=1_macbook.model"
 MODELFILE="${MODELFILE}.epoch_${EPOCH}.checkpoint"
 MODEL_PATH=${BASEFOLDER}/../kum/models/${MODELFILE}
 for SPECIES in ${SPECIES_LIST[@]}
@@ -54,7 +53,6 @@ CMD=$CMD" --model_list ${MODELLIST}"
 CMD=$CMD" --metric ${METRIC}"
 CMD=$CMD" --chunk_size ${CHUNK_SIZE}"
 CMD=$CMD" --species ${SPECIES}"
-CMD=$CMD" --sample_ids ${SAMPLE_IDS}"
 CMD=$CMD" --output ${OUTPUT_PATH}"
 $CMD
 
