@@ -4,14 +4,19 @@ import matplotlib.pyplot as plt
 # Read the result files and write them into a csv file
 
 # Define the dataset name
-dataset_name = "plant"
+dataset_name = "reference"
+batch_size = "100000"
+postfix = f"_batch={batch_size}"
 # Define the model name
-model_name = "model_k=4_d=256_negperpos=200_maxseq=100000_epoch=100_lr=0.001_batch=10000_loss=mahalanobis_strategy=mean_only_seed=1_macbook.model"
+# model_name = "model_k=4_d=256_negperpos=200_maxseq=100000_epoch=100_lr=0.001_batch=10000_loss=mahalanobis_strategy=mean_only_seed=1_macbook.model"
+# model_name = "model_k=4_d=256_negperpos=200_maxseq=100000_epoch=100_lr=0.001_batch=10000_loss=mahalanobis_strategy=mean_only_seed=1_main_cpu.model"
+model_name = f"model_k=4_d=256_negperpos=200_maxseq=100000_epoch=100_lr=0.001_batch={batch_size}_loss=mahalanobis_strategy=mean_only_seed=1_main_cpu.model"
+
 # Define epoch list
 epoch_list = list(range(5, 100, 5))
 
 # Define the folder
-results_dir = os.path.join(os.path.dirname(__file__), "..", "validation_results", dataset_name)
+results_dir = os.path.join(os.path.dirname(__file__), "..", "deis_validation_results", dataset_name)
 
 recall_list, precision_list, f1_list = [], [], []
 for epoch in epoch_list:
@@ -33,11 +38,11 @@ for epoch in epoch_list:
         f1_list.append(current_f1_scores)
 
 # Define the csv file path
-csv_file_path = os.path.join( results_dir, f"compiled_results.csv")
+csv_file_path = os.path.join( results_dir, f"compiled_results{postfix}.csv")
 # Write the results to a csv file
 with open(csv_file_path, "w") as f:
 
-    f.write(f"Reference, Clustering 0\n")
+    f.write(f"{dataset_name}, Clustering 0\n")
 
     for epoch, recall_scores, precision_scores, f1_scores in zip(epoch_list, recall_list, precision_list, f1_list):
         f.write("\n")
@@ -62,22 +67,26 @@ plt.plot(epoch_list, recall_list[:, -3:])
 plt.grid(True)
 plt.xlabel("Epoch")
 plt.ylabel("Recall")
+plt.xticks(ticks=epoch_list, labels=[str(e) for e in epoch_list], rotation=45)
 
 plt.subplot(1, 3, 2)
 plt.plot(epoch_list, precision_list[:, -3:],)
 plt.grid(True)
 plt.xlabel("Epoch")
 plt.ylabel("Precision")
+plt.xticks(ticks=epoch_list, labels=[str(e) for e in epoch_list], rotation=45)
 
 plt.subplot(1, 3, 3)
 plt.plot(epoch_list, f1_list[:, -3:], )
 plt.grid(True)
 plt.xlabel("Epoch")
 plt.ylabel("F1")
+plt.xticks(ticks=epoch_list, labels=[str(e) for e in epoch_list], rotation=45)
+
 #
 # Add a global legend with labels, 'a', 'b', and 'c'
 plt.legend([">0.7", ">0.8", ">0.9"], loc='center right', ncol=1, bbox_to_anchor=(1.25, 0.5) )
 plt.tight_layout()
 
 # plt.show()
-plt.savefig(os.path.join(results_dir, f"{dataset_name}_validation_results.png"))
+plt.savefig(os.path.join(results_dir, f"{dataset_name}_validation_results{postfix}.png"))
