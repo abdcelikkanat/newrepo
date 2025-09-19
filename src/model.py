@@ -347,15 +347,17 @@ def train(
         summary_writer
 ):
     # Check the strategy name
-    assert strategy in ["sequential", "mean_only", "var_only"], f"Unknown strategy name: {strategy}"
+    assert strategy in ["sequential", "mean_only", "var_only", "together"], f"Unknown strategy name: {strategy}"
 
     ### Define the optimizer
-    # At the beginning, we will not train the standard deviation parameters so we will not include them in the optimizer
+    # At the beginning, we will not train the standard deviation parameters if the strategy is "sequential" or "mean_only"
     include_std = False if strategy in ["sequential", "mean_only"] else True
     # Get the model parameters to train
     model_params = []
     for name, param in model.named_parameters():
         if 'std' in name and (strategy in ["sequential", "mean_only"]):
+            param.requires_grad = False
+        elif 'mean' in name and strategy in ["var_only"]:
             param.requires_grad = False
         else:
             model_params.append(param)
@@ -370,7 +372,6 @@ def train(
     # Switch the model to training mode
     model.train()
     for current_epoch in range(epoch_num):
-
         # Set the epoch for the sampler
         if distributed:
             data_loader.sampler.set_epoch(current_epoch)
@@ -515,7 +516,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_seq_num', type=int, default=100000, help='Maximum number of sequences to get from the file')
     parser.add_argument('--epoch', type=int, default=100, help='Epoch number')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
-    parser.add_argument('--strategy', type=str, default="sequential", help='Learning starting strategy (sequential, mean_only, var_only)')
+    parser.add_argument('--strategy', type=str, default="sequential", help='Learning starting strategy (sequential, mean_only, var_only, together)')
     parser.add_argument('--batch_size', type=int, default=10000, help='Batch size (0: no batch)')
     parser.add_argument('--save_every', type=int, default=0, help='Save checkpoint every x epochs (0 for no checkpoint)')
     parser.add_argument('--distributed', type=int, default=0, help='Use distributed training (0: no, 1: yes)')
