@@ -22,6 +22,14 @@ from scipy.optimize import linear_sum_assignment
 
 def clean_by_variance(dna_sequences, model_path, filter_ratio):
 
+    # If filter ratio is less than 0, then randomly select the sequences
+    if filter_ratio < 0:
+        print(f"Filter ratio {filter_ratio} is negative, so randomly select the sequences!")
+        chosen_indices = np.random.choice(
+            len(dna_sequences), size=int((1 + filter_ratio) * len(dna_sequences)), replace=False
+        )
+        return chosen_indices
+
     # Filter the sequences that have the largest minimum covariances
     kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
     model = Model(**kwargs)
@@ -486,40 +494,31 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
 
         similarities = np.exp(-distance.cdist(features1, features2, 'minkowski', p=2.)**2)
 
+    elif metric == "mahalanobis":
+
+        if chunk_size:
+
+            similarities = np.zeros((features1[0].shape[0], features2[0].shape[0]))
+            for i in range(0, features1[0].shape[0], chunk_size):
+
+                left_mean = features1[0][i:i + chunk_size, :][:, np.newaxis, :]
+                left_cov = features1[1][i:i + chunk_size, :][:, np.newaxis, :]
+                right_mean = features2[0][np.newaxis, :, :]
+                right_cov = features2[1][np.newaxis, :, :]
+
+                mean_squared_diff = (left_mean - right_mean)**2 * (0.5 / (left_cov + right_cov))
+                log_expectation = -0.5 * (mean_squared_diff).sum(axis=-1)
+                similarities[i:i + chunk_size, :] = np.exp(log_expectation)
+
+            similarities = np.exp(similarities)
+        else:
+
+            mean_squared_diff = (features1[0] - features2[0])**2 * (0.5 / (features1[1] + features2[2]))
+            log_expectation = -0.5 * (mean_squared_diff).sum(axis=-1)
+            similarities = np.exp(log_expectation)
+
     else:
         raise ValueError("Invalid metric!")
 
     return similarities
 
-def kl_div_cdist(means1, variances1, means2, variances2, eps=1e-6):
-    """
-        0.5 * (log(det(cov2) - log(det(cov1))) -k + tr(cov2^-1 * cov1) + (mean2 - mean1)^T cov2^-1 (mean2 - mean1)
-        """
-    variances1 = variances1 + eps
-    log_variances1 = np.log(variances1)
-    variances2 = variances2 + eps
-    log_variances2 = np.log(variances2)
-
-    d = means1.shape[1]
-    means1 = means1[:, np.newaxis, :]  # (n, 1, d)
-    means2 = means2[np.newaxis, :, :]  # (1, n, d)
-
-    vars1 = variances1[:, np.newaxis, :]
-    vars2 = variances2[np.newaxis, :, :]
-
-    log_vars1 = log_variances1[:, np.newaxis, :]
-    log_vars2 = log_variances2[np.newaxis, :, :]
-
-    trace_term = np.sum(vars1 / vars2, axis=2)  # (n, n)
-    quadratic_term = np.sum((means1 - means2) ** 2 / vars2, axis=2)  # (n, n)
-    log_det_term = np.sum(log_vars2 - log_vars1, axis=2)  # (n, n)
-
-    kl_matrix = 0.5 * (trace_term + quadratic_term - d + log_det_term)
-    # np.fill_diagonal(kl_matrix, 0)  # KL divergence with itself is 0
-
-    return kl_matrix
-
-
-def kl_div_pdist(means, variances, eps=1e-6):
-
-    return kl_div_cdist(means, variances, means, variances, eps=eps)
