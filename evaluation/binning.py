@@ -20,7 +20,7 @@ MIN_ABUNDANCE_VALUE = 10
 def main(args):
 
     # Check if the filtering strategy and ratio are consistent
-    if (args.filter_strategy == "" and args.filter_ratio > 0) or (args.filter_strategy != "" and args.filter_ratio == 0):
+    if (args.filter_strategy == "" and args.filter_ratio != 0) or (args.filter_strategy != "" and args.filter_ratio == 0):
         raise ValueError("If filter_strategy is chosen, filter_ratio must be > 0 and vice versa")
 
     model_list = args.model_list.split(",")
@@ -82,13 +82,13 @@ def main(args):
                     data_path=data_file, shorten=MAX_SEQ_LEN, min_len=MIN_SEQ_LEN, abundance=MIN_ABUNDANCE_VALUE,
                 )
                 # Clean the sequences that have the largest minimum covariances
-                if args.filter_ratio > 0:
+                if args.filter_ratio != 0:
                     selected_idx = clean_by_variance(
                         dna_sequences, model_path=args.model_path, filter_ratio=args.filter_ratio
                     )
 
                 # Clean the sequences if the strategy is before the clustering step
-                if args.filter_ratio > 0 and args.filter_strategy == "before":
+                if args.filter_ratio != 0 and args.filter_strategy == "before":
                     print(f"\t+ Cleaning the sequences before the clustering step (Ratio: {args.filter_ratio})")
                     print(f"\t- {len(selected_idx)} sequences left out of {len(dna_sequences)}")
                     dna_sequences = [dna_sequences[i] for i in selected_idx]
@@ -117,7 +117,7 @@ def main(args):
                     max_iter=1000, metric=metric, chunk_size=args.chunk_size
                 )
                 # Clean the sequences if the strategy is after the clustering step
-                if args.filter_ratio > 0 and args.filter_strategy == "after":
+                if args.filter_ratio != 0 and args.filter_strategy == "after":
                     idx = 0
                     sorted_selected_indices = sorted(selected_idx)
                     for i in range(len(binning_results)):
