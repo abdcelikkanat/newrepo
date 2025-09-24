@@ -196,7 +196,7 @@ def main(args):
                     print(f"F1 scores: {f1_list}")
 
     # Save the scores dictionary to a file
-    with open(args.output_file, "wb") as f:
+    with open(args.output, "wb") as f:
         pickle.dump(scores, f)
 
 
