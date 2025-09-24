@@ -45,28 +45,28 @@ def remove_sequences(filter_ratios, thresholds, sequence_num, sorted_seq_indices
         )[1:]  # We do not consider the garbage class
         current_class_recall_scores.sort()
 
-        current_class_precision_scores = sklearn.metrics.precision_score(
-            y_true=current_ground_truth_labels, y_pred=current_pred_labels, labels=all_labels, verage=None
-        )[1:]  # We do not consider the garbage class
-        current_class_precision_scores.sort()
-
-        current_class_f1_scores = sklearn.metrics.f1_score(
-            y_true=current_ground_truth_labels, y_pred=current_pred_labels, labels=all_labels, verage=None
-        )[1:]  # We do not consider the garbage class
-        current_class_f1_scores.sort()
-
+        # current_class_precision_scores = sklearn.metrics.precision_score(
+        #     y_true=current_ground_truth_labels, y_pred=current_pred_labels, labels=all_labels, verage=None
+        # )[1:]  # We do not consider the garbage class
+        # current_class_precision_scores.sort()
+        #
+        # current_class_f1_scores = sklearn.metrics.f1_score(
+        #     y_true=current_ground_truth_labels, y_pred=current_pred_labels, labels=all_labels, verage=None
+        # )[1:]  # We do not consider the garbage class
+        # current_class_f1_scores.sort()
+        #
         # Calculate the recall scores for different thresholds
         recall_list.append(
             [sum(current_class_recall_scores > threshold) for threshold in thresholds]
         )
-        # Calculate the precision scores for different thresholds
-        precision_list.append(
-            [sum(current_class_precision_scores > threshold) for threshold in thresholds]
-        )
-        # Calculate the f1 scores for different thresholds
-        f1_list.append(
-            [sum(current_class_f1_scores > threshold) for threshold in thresholds]
-        )
+        # # Calculate the precision scores for different thresholds
+        # precision_list.append(
+        #     [sum(current_class_precision_scores > threshold) for threshold in thresholds]
+        # )
+        # # Calculate the f1 scores for different thresholds
+        # f1_list.append(
+        #     [sum(current_class_f1_scores > threshold) for threshold in thresholds]
+        # )
 
     return recall_list, precision_list, f1_list
 
@@ -76,8 +76,11 @@ def main(args):
     scores = {}
     model_list = args.model_list.split(",")
     for model_name in model_list:
+        scores[model_name] = {}
         for species in args.species.split(","):
+            scores[model_name][species] = {}
             for sample_id in map(int, args.sample_ids.split(",")):
+                scores[model_name][species][sample_id] = {}
 
                 # Define the metric for the given method
                 metric = args.metric
@@ -159,11 +162,11 @@ def main(args):
                 # Define the threshold values
                 thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
                 # Define filter ratios to be used
-                filter_ratios = np.arange(0, 1.0, 0.01)
+                filter_ratios = np.arange(0.01, 0.5, 0.01)
 
 
-                scores = {}
                 for strategy in ["random", "cov"]:
+
                     print(f"\t- Strategy: {strategy}")
 
                     if strategy == "random":
@@ -188,6 +191,9 @@ def main(args):
                         "precision": precision_list,
                         "f1": f1_list
                     }
+                    print(f"Recall scores: {recall_list}")
+                    print(f"Precision scores: {precision_list}")
+                    print(f"F1 scores: {f1_list}")
 
     # Save the scores dictionary to a file
     with open(args.output_file, "wb") as f:
