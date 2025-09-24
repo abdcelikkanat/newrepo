@@ -27,7 +27,7 @@ def remove_sequences(filter_ratios, thresholds, sequence_num, sorted_seq_indices
         print(f"\t- Filtering ratio: {filtering_ratio:.2f}")
         # Define the number of sequences to be filtered
         num_sequences_to_filter = int(sequence_num * filtering_ratio)
-        chosen_indices = sorted_seq_indices[:num_sequences_to_filter]
+        chosen_indices = np.asarray(sorted_seq_indices)[:num_sequences_to_filter]
 
         # Construct copies of the predicted and ground truth labels
         current_pred_labels = np.asarray(predicted_labels_bin).copy()
