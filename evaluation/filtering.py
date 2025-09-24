@@ -18,7 +18,7 @@ MIN_SEQ_LEN = 2500
 MIN_ABUNDANCE_VALUE = 10
 
 
-def filter_sequences(filter_ratios, thresholds, sequence_num, sorted_seq_indices, true_labels_bin, predicted_labels_bin):
+def remove_sequences(filter_ratios, thresholds, sequence_num, sorted_seq_indices, true_labels_bin, predicted_labels_bin):
 
     # Define the recall, precision and f1 lists to store the results
     recall_list, precision_list, f1_list = [], [], []
@@ -183,7 +183,7 @@ def main(args):
                         sorted_seq_indices = np.sort(covs, axis=-1)[:, int(covs.shape[1]*0.5)]
 
                     # Get the recall, precision and f1 lists after filtering the sequences
-                    recall_list, precision_list, f1_list = filter_sequences(
+                    recall_list, precision_list, f1_list = remove_sequences(
                         filter_ratios=filter_ratios, thresholds=thresholds, sequence_num=len(true_labels_bin),
                         sorted_seq_indices=sorted_seq_indices,
                         true_labels_bin=true_labels_bin, predicted_labels_bin=predicted_labels_bin
