@@ -175,7 +175,7 @@ def main(args):
                         _, covs = features
                         # means = means[binning_results != -1]
                         covs = covs[binning_results != -1]
-                        sorted_seq_indices = np.sort(covs, axis=-1)[:, int(covs.shape[1]*0.5)]
+                        sorted_seq_indices = np.argsort(covs, axis=-1)[:, int(covs.shape[1]*0.5)]
 
                     # Get the recall, precision and f1 lists after filtering the sequences
                     recall_list, precision_list, f1_list = remove_sequences(
