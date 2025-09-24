@@ -99,7 +99,6 @@ def main(args):
                 labels = convert_labels2int(labels)
                 print(f"+ Initial filtering of clustering_0.tsv was done in {time.time() - init_time:.2f} seconds")
 
-                # # Define the embedding/feature file path. If file exist, we don't need to recompute the dna embeddings
                 # Get embeddings (and covariances) of the sequences in the dataset named clustering
                 init_time = time.time()
                 features = get_embedding(
@@ -132,16 +131,11 @@ def main(args):
 
                 print(f"+ Initial filtering of binning_{sample_id}.tsv was done in {time.time() - init_time:.2f} seconds")
 
-                # Define the embedding/feature file path. If the file exist, we don't recompute the dna embeddings
-                embedding_file_path = ""
-                if args.feature_folder != "":
-                    filename = os.path.basename(args.model_path) + ".features"
-                    embedding_file_path = os.path.join(args.feature_folder, species, f"binning_{sample_id}", filename)
                 # Generate embeddings for the binning set
                 init_time = time.time()
                 features = get_embedding(
                     dna_sequences=dna_sequences, model_name=model_name, species=species, sample_id=sample_id,
-                    k=args.k, model_path=args.model_path, embedding_file_path=embedding_file_path,
+                    k=args.k, model_path=args.model_path, embedding_file_path="",
                 )
                 print(f"\t- Embeddings of binning_{sample_id}.tsv were computed in {time.time() - init_time:.2f} seconds")
                 # Run the k-medoid algorithm
