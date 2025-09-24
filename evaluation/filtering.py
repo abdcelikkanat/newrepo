@@ -24,6 +24,7 @@ def remove_sequences(filter_ratios, thresholds, sequence_num, sorted_seq_indices
     recall_list, precision_list, f1_list = [], [], []
 
     for filtering_ratio in filter_ratios:
+        print(f"\t- Filtering ratio: {filtering_ratio:.2f}")
         # Define the number of sequences to be filtered
         num_sequences_to_filter = int(sequence_num * filtering_ratio)
         chosen_indices = sorted_seq_indices[:num_sequences_to_filter]
@@ -163,6 +164,7 @@ def main(args):
 
                 scores = {}
                 for strategy in ["random", "cov"]:
+                    print(f"\t- Strategy: {strategy}")
 
                     if strategy == "random":
                         sorted_seq_indices = np.random.permutation(len(true_labels_bin))
