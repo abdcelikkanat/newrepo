@@ -510,7 +510,6 @@ def compute_similarity_matrix(features1, features2 = None, metric="dot", chunk_s
                 log_expectation = -0.5 * (mean_squared_diff).sum(axis=-1)
                 similarities[i:i + chunk_size, :] = np.exp(log_expectation)
 
-            similarities = np.exp(similarities)
         else:
 
             mean_squared_diff = (features1[0] - features2[0])**2 * (0.5 / (features1[1] + features2[2]))
