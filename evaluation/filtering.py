@@ -100,15 +100,11 @@ def main(args):
                 print(f"+ Initial filtering of clustering_0.tsv was done in {time.time() - init_time:.2f} seconds")
 
                 # # Define the embedding/feature file path. If file exist, we don't need to recompute the dna embeddings
-                cluster_embs_file_path = ""
-                if args.feature_folder != "":
-                    filename = os.path.basename(args.model_path) + ".features"
-                    cluster_embs_file_path = os.path.join(args.feature_folder, species, f"clustering_{sample_id}",filename)
                 # Get embeddings (and covariances) of the sequences in the dataset named clustering
                 init_time = time.time()
                 features = get_embedding(
                     dna_sequences=dna_sequences, model_name=model_name, species=species, sample_id=0,
-                    k=args.k, model_path=args.model_path, embedding_file_path=cluster_embs_file_path,
+                    k=args.k, model_path=args.model_path, embedding_file_path="",
                 )
                 print(f"\t- Computing the clustering file embeddings (done in {time.time() - init_time:.2f} seconds")
 
