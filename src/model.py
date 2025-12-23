@@ -274,8 +274,11 @@ def loss_func(
         left_mean = left_mean
         right_mean = right_mean
 
-        p = torch.exp(-torch.norm(left_mean - right_mean, dim=1)**2)
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
+        squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
+        squared_dist = max(torch.log(torch.asarray([2.]), squared_dist))
+        return labels*squared_dist - (1-labels)*torch.log(1-torch.exp(-squared_dist) + 1e-6)
+        # p = torch.exp(-torch.norm(left_mean - right_mean, dim=1) ** 2)
+        # return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
     elif loss_name == "mahalanobis":
 
