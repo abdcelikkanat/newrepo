@@ -292,7 +292,7 @@ def loss_func(
         right_mean = right_mean
 
         squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
-        squared_dist = max(torch.log(torch.asarray([[2.]])), squared_dist)
+        squared_dist =  torch.maximum(torch.log(torch.asarray([[2.]])), squared_dist)
         output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(-squared_dist) + 1e-6)
         return output.mean()
 
