@@ -277,6 +277,14 @@ def loss_func(
         p = torch.exp(-torch.norm(left_mean - right_mean, dim=1) ** 2)
         return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
 
+    elif loss_name == "l2_05builtin":
+
+        left_mean = left_mean
+        right_mean = right_mean
+
+        p = torch.exp(-0.5*torch.norm(left_mean - right_mean, dim=1) ** 2)
+        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
+
     elif loss_name == "l2_implementation":
 
         left_mean = left_mean
