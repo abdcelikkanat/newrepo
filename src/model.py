@@ -296,6 +296,12 @@ def loss_func(
         output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(-squared_dist) + 1e-6)
         return output.mean()
 
+    elif loss_name == "hinge":
+
+        dist = torch.norm(left_mean - right_mean, p=2, dim=1)
+        output = labels * (dist ** 2) + (1 - labels) * torch.nn.functional.relu(1 - dist) ** 2
+        return output.mean()
+
     elif loss_name == "mahalanobis":
 
         if not include_std:
