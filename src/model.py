@@ -304,6 +304,18 @@ def loss_func(
         output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(-squared_dist) + 1e-6)
         return output.mean()
 
+    elif loss_name == "l2_constrained_v2":
+
+        left_mean = left_mean
+        right_mean = right_mean
+
+        dist = torch.norm(left_mean - right_mean, dim=1)
+        second_part =  torch.minimum(
+            (1-dist)**2, -torch.log(1 - torch.exp(-dist**2) + 1e-6)
+        )
+        output = labels * dist**2 + (1 - labels) * second_part
+        return output.mean()
+
     elif loss_name == "hinge":
 
         dist = torch.norm(left_mean - right_mean, p=2, dim=1)
