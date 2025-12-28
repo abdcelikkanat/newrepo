@@ -352,6 +352,36 @@ def loss_func(
         output = labels * dist**2 + (1 - labels) * second_part
         return output.mean()
 
+    elif loss_name == "l2_constrained_v5":
+
+        left_mean = left_mean
+        right_mean = right_mean
+
+        dist = torch.norm(left_mean - right_mean, dim=1)
+
+        second_part = -torch.log(1 - torch.exp(-dist**2) + 1e-6)
+
+        idx = dist > torch.sqrt(torch.log(torch.asarray([2.])))
+        second_part[idx] = torch.nn.functional.relu(1-dist[idx]**2) # we need relu because dist can be greater than 1
+
+        output = labels * dist**2 + (1 - labels) * second_part
+        return output.mean()
+
+    elif loss_name == "l2_constrained_v6":
+
+        left_mean = left_mean
+        right_mean = right_mean
+
+        dist = torch.norm(left_mean - right_mean, dim=1)
+
+        second_part = -torch.log(1 - torch.exp(-dist**2) + 1e-6)
+
+        idx = dist <= torch.sqrt(torch.log(torch.asarray([2.])))
+        second_part[idx] = 1-dist[idx]**2
+
+        output = labels * dist**2 + (1 - labels) * second_part
+        return output.mean()
+
     elif loss_name == "hinge":
 
         dist = torch.norm(left_mean - right_mean, p=2, dim=1)
