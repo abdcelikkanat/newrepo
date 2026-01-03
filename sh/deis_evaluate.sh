@@ -10,7 +10,7 @@
 
 
 # Define the global variables
-BASEFOLDER=/nfs/home/cs.aau.dk/zs74qz/workspace/kum
+BASEFOLDER=/nfs/home/cs.aau.dk/zs74qz/workspace/icml
 PYTHON=/nfs/home/cs.aau.dk/zs74qz/miniconda3/envs/kum/bin/python
 SCRIPT_PATH=${BASEFOLDER}/evaluation/binning.py
 RESULTS_FOLDER=${BASEFOLDER}/results
