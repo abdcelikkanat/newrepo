@@ -150,7 +150,7 @@ class PairDataset(Dataset):
             torch.arange(self.__kmers.shape[0]//2, dtype=torch.long)+self.__kmers.shape[0]//2
         ))
         # Sample 'neg_sample_per_pos' negative pair indices for each positive pair
-        if pair_strategy == "tf":
+        if pair_strategy == "tn":
             assert self.__class_labels is not None, "Labels are not provided."
             class_num = max(self.__class_labels) + 1
             temp_weights1 = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
