@@ -58,7 +58,7 @@ class KmerConverter:
 
 
 class PairDataset(Dataset):
-    def __init__(self, file_path, k, neg_sample_per_pos=1000, max_seq_num=0, verbose=True, seed=0):
+    def __init__(self, file_path, k, neg_sample_per_pos=1000, max_seq_num=0, verbose=True, seed=0, pair_strategy="standard"):
         """
         PairDataset constructor
         """
@@ -90,15 +90,25 @@ class PairDataset(Dataset):
 
         # Read the file
         chosen_line_idx = 0
-        left_kmer_profiles, right_kmer_profiles = [], []
+        left_kmer_profiles, right_kmer_profiles, class_labels = [], [], []
         f = open(file_path, 'r')
         for line_no, line in enumerate(f):
 
             if line_no == chosen_lines[chosen_line_idx]:
-                left_seq, right_seq = line.strip().split(',')
+                tokens = line.strip().split(',')
+                if len(tokens) == 2:
+                    left_seq, right_seq = tokens
+                    class_label = None
+                elif len(tokens) == 3:
+                    left_seq, right_seq, class_label = tokens
+                else:
+                    raise ValueError(f"Invalid line {line_no} in file {file_path}.")
 
                 left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
                 right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
+                if class_label is not None:
+                    class_labels.append(class_label)
+
 
                 # Increment the chosen_line_idx
                 chosen_line_idx += 1
@@ -112,6 +122,16 @@ class PairDataset(Dataset):
         self.__kmers = torch.from_numpy(
             np.asarray(left_kmer_profiles + right_kmer_profiles)
         ).to(torch.float)
+        # Similarly arange the labels
+        if len(class_labels) > 0:
+            # First, convert the labels to integer IDs
+            unique_class_labels = np.unique(class_labels)
+            class_label2id = dict(zip(unique_class_labels, range(len(unique_class_labels))))
+            self.__class_labels = torch.asarray([class_label2id[label] for label in class_labels])
+            # Since the left and right labels are the same, concatenate the labels
+            self.__class_labels = torch.concatenate((self.__class_labels, self.__class_labels))
+        else:
+            self.__class_labels = None
 
         if verbose:
             print(f"\t- Completed in {time.time() - init_time:.2f} seconds.")
@@ -130,11 +150,30 @@ class PairDataset(Dataset):
             torch.arange(self.__kmers.shape[0]//2, dtype=torch.long)+self.__kmers.shape[0]//2
         ))
         # Sample 'neg_sample_per_pos' negative pair indices for each positive pair
-        temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
-        neg_indices = torch.vstack((
-            torch.multinomial(temp_weights, pos_indices.shape[1]*self.__neg_sample_per_pos, replacement=True),
-            torch.multinomial(temp_weights, pos_indices.shape[1]*self.__neg_sample_per_pos, replacement=True),
-        ))
+        if pair_strategy == "tf":
+            assert self.__class_labels is not None, "Labels are not provided."
+            class_num = max(self.__class_labels) + 1
+            temp_weights1 = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
+            idx1 = torch.multinomial(temp_weights1, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True)
+            idx1_class_labels = torch.asarray([self.__class_labels[id] for id in idx1])
+            idx2 = torch.zeros_like(idx1)
+            for class_idx in range(class_num):
+                temp_weights2 = torch.zeros((self.__kmers.shape[0],), dtype=torch.float)
+                temp_weights2[self.__class_labels == class_idx] = 1
+                idx2[idx1_class_labels == class_idx] = torch.multinomial(
+                    temp_weights2, num_samples=sum(idx1_class_labels == class_idx), replacement=True
+                )
+            neg_indices = torch.vstack((idx1, idx2))
+
+        elif pair_strategy == "standard":
+            temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
+            neg_indices = torch.vstack((
+                torch.multinomial(temp_weights, pos_indices.shape[1]*self.__neg_sample_per_pos, replacement=True),
+                torch.multinomial(temp_weights, pos_indices.shape[1]*self.__neg_sample_per_pos, replacement=True),
+            ))
+        else:
+            raise ValueError(f"Invalid pair_strategy {pair_strategy}.")
+
         # Concatenate the positive and negative indices
         self.__indices = torch.hstack((pos_indices, neg_indices))
         self.__labels = torch.hstack((
@@ -636,6 +675,8 @@ if __name__ == "__main__":
     parser.add_argument('--loss_name', type=str, default="mahalanobis", help='Loss function (l2, mahalanobis)')
     parser.add_argument('--log_dir', type=str, default="", help='Path directory to save the log file')
     parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
+    parser.add_argument('--pair_strategy', type=str, default="standard", help='standard | tn')
+
 
     args = parser.parse_args()
 
@@ -677,11 +718,12 @@ if __name__ == "__main__":
     print(f"\t- Number of data loading workers: {args.workers}")
     print(f"\t- Seed value: {args.seed}")
     print(f"\t- Output model name: {os.path.basename(args.output)}")
+    print(f"\t- Pair strategy: {args.pair_strategy}")
 
     ### Read the dataset and construct the data loader
     training_dataset = PairDataset(
         file_path=args.input, k=args.k, neg_sample_per_pos=args.neg_sample_per_pos, max_seq_num=args.max_seq_num,
-        seed=args.seed
+        seed=args.seed, pair_strategy=args.pair_strategy,
     )
     # Define the arguments for the main worker function
     arguments = (
