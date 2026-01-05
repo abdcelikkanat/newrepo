@@ -153,16 +153,20 @@ class PairDataset(Dataset):
         if pair_strategy == "tn":
             assert self.__class_labels is not None, "Labels are not provided."
             class_num = max(self.__class_labels) + 1
-            temp_weights1 = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
-            idx1 = torch.multinomial(temp_weights1, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True)
+            temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
+            idx1 = torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True)
             idx1_class_labels = torch.asarray([self.__class_labels[id] for id in idx1])
-            idx2 = torch.zeros_like(idx1)
-            for class_idx in range(class_num):
-                temp_weights2 = torch.zeros((self.__kmers.shape[0],), dtype=torch.float)
-                temp_weights2[self.__class_labels == class_idx] = 1
-                idx2[idx1_class_labels == class_idx] = torch.multinomial(
-                    temp_weights2, num_samples=sum(idx1_class_labels == class_idx), replacement=True
-                )
+            idx2 = torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True)
+            idx2_class_labels = torch.asarray([self.__class_labels[id] for id in idx1])
+            for i in range(len(idx1)):
+                # If class labels are the same, sample a new index which is different
+                if idx1_class_labels[i] == idx2_class_labels[i]:
+                    temp_weights = torch.zeros((self.__kmers.shape[0],), dtype=torch.float)
+                    temp_weights[self.__class_labels != idx1_class_labels[i]] = 1
+                    new_id = torch.multinomial(temp_weights, 1, replacement=True)
+                    idx2_class_labels[i] = self.__class_labels[new_id]
+                    idx2[i] = new_id
+
             neg_indices = torch.vstack((idx1, idx2))
 
         elif pair_strategy == "standard":
