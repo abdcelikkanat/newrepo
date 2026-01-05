@@ -156,16 +156,17 @@ class PairDataset(Dataset):
             temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
             idx1 = torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True)
             idx1_class_labels = torch.asarray([self.__class_labels[id] for id in idx1])
+
             idx2 = torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True)
-            idx2_class_labels = torch.asarray([self.__class_labels[id] for id in idx1])
-            for i in range(len(idx1)):
-                # If class labels are the same, sample a new index which is different
-                if idx1_class_labels[i] == idx2_class_labels[i]:
-                    temp_weights = torch.zeros((self.__kmers.shape[0],), dtype=torch.float)
-                    temp_weights[self.__class_labels != idx1_class_labels[i]] = 1
-                    new_id = torch.multinomial(temp_weights, 1, replacement=True)
-                    idx2_class_labels[i] = self.__class_labels[new_id]
-                    idx2[i] = new_id
+            idx2_class_labels = torch.asarray([self.__class_labels[id] for id in idx2])
+            while sum(idx1_class_labels == idx2_class_labels) > 0:
+
+                equal_positions = idx1_class_labels == idx2_class_labels
+
+                new_idx = torch.multinomial(temp_weights, sum(equal_positions), replacement=True)
+
+                idx2[equal_positions] = new_idx
+                idx2_class_labels[equal_positions] = torch.asarray([self.__class_labels[id] for id in new_idx])
 
             neg_indices = torch.vstack((idx1, idx2))
 
