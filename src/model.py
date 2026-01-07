@@ -358,6 +358,24 @@ def loss_func(
 
         return torch.nn.functional.binary_cross_entropy(torch.exp(log_expectation), labels, reduction='mean')
 
+    elif loss_name == "l2_truncated1_implementation":
+
+        left_mean = left_mean
+        right_mean = right_mean
+
+        squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
+        output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(-squared_dist, -1, 0)) + 1e-6)
+        return output.mean()
+
+    elif loss_name == "l2_truncated2_implementation":
+
+        left_mean = left_mean
+        right_mean = right_mean
+
+        squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
+        output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(-squared_dist, -2, 0)) + 1e-6)
+        return output.mean()
+
     elif loss_name == "l2_implementation":
 
         left_mean = left_mean
