@@ -144,13 +144,36 @@ class PairDataset(Dataset):
             print(f"+ Constructing the indices for positive and negative sample pairs")
             init_time = time.time()
 
-        # Sample 'pos_indices' positive pair indices
-        pos_indices = torch.vstack((
-            torch.arange(self.__kmers.shape[0]//2, dtype=torch.long),
-            torch.arange(self.__kmers.shape[0]//2, dtype=torch.long)+self.__kmers.shape[0]//2
-        ))
+        pos_indices, neg_indices = None, None
+        if pair_strategy in ["standard", "tn"]:
+            # Sample 'pos_indices' positive pair indices
+            pos_indices = torch.vstack((
+                torch.arange(self.__kmers.shape[0]//2, dtype=torch.long),
+                torch.arange(self.__kmers.shape[0]//2, dtype=torch.long)+self.__kmers.shape[0]//2
+            ))
+
+        elif pair_strategy in ["tp", "tptn"]:
+            temp_indices = torch.arange(len(self.__class_labels), dtype=torch.long)
+            class_num = max(self.__class_labels) + 1
+            pos_indices = torch.empty(0, 2, dtype=torch.long)
+            for cidx in range(class_num):
+                class_pairs = torch.combinations(temp_indices[self.__class_labels == cidx], r=2)
+                pos_indices = torch.vstack((pos_indices, class_pairs))
+            pos_indices = pos_indices.T
+
+        else:
+            raise ValueError(f"Invalid pair_strategy for positive pairs {pair_strategy}.")
+
         # Sample 'neg_sample_per_pos' negative pair indices for each positive pair
-        if pair_strategy == "tn":
+        if pair_strategy in ["standard", "tp"]:
+
+            temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
+            neg_indices = torch.vstack((
+                torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True),
+                torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True),
+            ))
+
+        elif pair_strategy in ["tn", "tptn"]:
             assert self.__class_labels is not None, "Labels are not provided."
             class_num = max(self.__class_labels) + 1
             temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
@@ -170,14 +193,8 @@ class PairDataset(Dataset):
 
             neg_indices = torch.vstack((idx1, idx2))
 
-        elif pair_strategy == "standard":
-            temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
-            neg_indices = torch.vstack((
-                torch.multinomial(temp_weights, pos_indices.shape[1]*self.__neg_sample_per_pos, replacement=True),
-                torch.multinomial(temp_weights, pos_indices.shape[1]*self.__neg_sample_per_pos, replacement=True),
-            ))
         else:
-            raise ValueError(f"Invalid pair_strategy {pair_strategy}.")
+            raise ValueError(f"Invalid pair_strategy for negative pairs {pair_strategy}.")
 
         # Concatenate the positive and negative indices
         self.__indices = torch.hstack((pos_indices, neg_indices))
