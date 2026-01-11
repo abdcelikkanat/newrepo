@@ -38,7 +38,7 @@ def clean_by_variance(dna_sequences, model_path, filter_ratio):
     _, covs = model.seq2emb(dna_sequences)
 
     # Get the sorted indices of the stds
-    sorted_idx = np.argsort(np.min(covs, axis=1))
+    sorted_idx = np.argsort(np.max(covs, axis=1))
     selected_idx = sorted_idx[:int((1 - filter_ratio) * len(covs))]
     print(f"The data had {len(sorted_idx)} sequences and {len(selected_idx)} remained after cleaning by variances!")
 
