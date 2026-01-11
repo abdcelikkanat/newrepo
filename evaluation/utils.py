@@ -222,7 +222,7 @@ def compute_class_center_medium_similarity(features, labels, metric="dot", chunk
         # If covariances are provided, we also need to get the mean of the covariances
         if covs is not None:
             # features1 = (features1, np.mean(covs[start:end], axis=0, keepdims=True))
-            features1 = (features1, 1e-6 * np.ones_like(features1))
+            features1 = (features1, 1e0 * np.ones_like(features1))
             features2 = (features2, covs[start:end])
 
         # Compute the similarity matrix between the two sets of features
@@ -274,7 +274,7 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
         s = np.argmax(row_sum)
         # Initialize the current medoid (Line 4)
         # current_medoid = (features[0][s], features[1][s]) if isinstance(features, tuple) else features[s]
-        current_medoid = (features[0][s], 1e-6 * np.ones_like(features[1][s])) if isinstance(features, tuple) else features[s]
+        current_medoid = (features[0][s], 1e0 * np.ones_like(features[1][s])) if isinstance(features, tuple) else features[s]
 
         selected_idx = None
         # Optimize the current medoid (Line 5-8)
@@ -298,7 +298,7 @@ def KMedoid(features, min_similarity, min_bin_size=100, max_iter=300, metric="do
             # Determine the new k-medoid
             if isinstance(features, tuple):
                 # current_medoid = (np.mean(features[0][selected_idx], axis=0), np.mean(features[1][selected_idx], axis=0))
-                current_medoid = (np.mean(features[0][selected_idx], axis=0), 1e-6 * np.ones(shape=(1, features[1].shape[1]) ))
+                current_medoid = (np.mean(features[0][selected_idx], axis=0), 1e0 * np.ones(shape=(1, features[1].shape[1]) ))
             else:
                 current_medoid = np.mean(features[selected_idx], axis=0)
 
