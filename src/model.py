@@ -503,7 +503,7 @@ def loss_func(
             squared_diff = squared_diff / (left_cov + right_cov)
 
             # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1)
+            log_expectation = -squared_diff.sum(dim=1) / 4.
 
         output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -1, 0)) + 1e-6)
         return output.mean()
