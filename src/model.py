@@ -58,7 +58,7 @@ class KmerConverter:
 
 
 class PairDataset(Dataset):
-    def __init__(self, file_path, k, neg_sample_per_pos=1000, max_seq_num=0, verbose=True, seed=0, pair_strategy="standard"):
+    def __init__(self, file_path, k, neg_sample_per_pos=1000, max_seq_num=0, verbose=True, seed=0):
         """
         PairDataset constructor
         """
@@ -90,25 +90,15 @@ class PairDataset(Dataset):
 
         # Read the file
         chosen_line_idx = 0
-        left_kmer_profiles, right_kmer_profiles, class_labels = [], [], []
+        left_kmer_profiles, right_kmer_profiles = [], []
         f = open(file_path, 'r')
         for line_no, line in enumerate(f):
 
             if line_no == chosen_lines[chosen_line_idx]:
-                tokens = line.strip().split(',')
-                if len(tokens) == 2:
-                    left_seq, right_seq = tokens
-                    class_label = None
-                elif len(tokens) == 3:
-                    left_seq, right_seq, class_label = tokens
-                else:
-                    raise ValueError(f"Invalid line {line_no} in file {file_path}.")
+                left_seq, right_seq = line.strip().split(',')
 
                 left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
                 right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
-                if class_label is not None:
-                    class_labels.append(class_label)
-
 
                 # Increment the chosen_line_idx
                 chosen_line_idx += 1
@@ -122,16 +112,6 @@ class PairDataset(Dataset):
         self.__kmers = torch.from_numpy(
             np.asarray(left_kmer_profiles + right_kmer_profiles)
         ).to(torch.float)
-        # Similarly arange the labels
-        if len(class_labels) > 0:
-            # First, convert the labels to integer IDs
-            unique_class_labels = np.unique(class_labels)
-            class_label2id = dict(zip(unique_class_labels, range(len(unique_class_labels))))
-            self.__class_labels = torch.asarray([class_label2id[label] for label in class_labels])
-            # Since the left and right labels are the same, concatenate the labels
-            self.__class_labels = torch.concatenate((self.__class_labels, self.__class_labels))
-        else:
-            self.__class_labels = None
 
         if verbose:
             print(f"\t- Completed in {time.time() - init_time:.2f} seconds.")
@@ -144,58 +124,17 @@ class PairDataset(Dataset):
             print(f"+ Constructing the indices for positive and negative sample pairs")
             init_time = time.time()
 
-        pos_indices, neg_indices = None, None
-        if pair_strategy in ["standard", "tn"]:
-            # Sample 'pos_indices' positive pair indices
-            pos_indices = torch.vstack((
-                torch.arange(self.__kmers.shape[0]//2, dtype=torch.long),
-                torch.arange(self.__kmers.shape[0]//2, dtype=torch.long)+self.__kmers.shape[0]//2
-            ))
-
-        elif pair_strategy in ["tp", "tptn"]:
-            temp_indices = torch.arange(len(self.__class_labels), dtype=torch.long)
-            class_num = max(self.__class_labels) + 1
-            pos_indices = torch.empty(0, 2, dtype=torch.long)
-            for cidx in range(class_num):
-                class_pairs = torch.combinations(temp_indices[self.__class_labels == cidx], r=2)
-                pos_indices = torch.vstack((pos_indices, class_pairs))
-            pos_indices = pos_indices.T
-
-        else:
-            raise ValueError(f"Invalid pair_strategy for positive pairs {pair_strategy}.")
-
+        # Sample 'pos_indices' positive pair indices
+        pos_indices = torch.vstack((
+            torch.arange(self.__kmers.shape[0] // 2, dtype=torch.long),
+            torch.arange(self.__kmers.shape[0] // 2, dtype=torch.long) + self.__kmers.shape[0] // 2
+        ))
         # Sample 'neg_sample_per_pos' negative pair indices for each positive pair
-        if pair_strategy in ["standard", "tp"]:
-
-            temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
-            neg_indices = torch.vstack((
-                torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True),
-                torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True),
-            ))
-
-        elif pair_strategy in ["tn", "tptn"]:
-            assert self.__class_labels is not None, "Labels are not provided."
-            class_num = max(self.__class_labels) + 1
-            temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
-            idx1 = torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True)
-            idx1_class_labels = torch.asarray([self.__class_labels[id] for id in idx1])
-
-            idx2 = torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True)
-            idx2_class_labels = torch.asarray([self.__class_labels[id] for id in idx2])
-            while sum(idx1_class_labels == idx2_class_labels) > 0:
-
-                equal_positions = idx1_class_labels == idx2_class_labels
-
-                new_idx = torch.multinomial(temp_weights, sum(equal_positions), replacement=True)
-
-                idx2[equal_positions] = new_idx
-                idx2_class_labels[equal_positions] = torch.asarray([self.__class_labels[id] for id in new_idx])
-
-            neg_indices = torch.vstack((idx1, idx2))
-
-        else:
-            raise ValueError(f"Invalid pair_strategy for negative pairs {pair_strategy}.")
-
+        temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
+        neg_indices = torch.vstack((
+            torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True),
+            torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True),
+        ))
         # Concatenate the positive and negative indices
         self.__indices = torch.hstack((pos_indices, neg_indices))
         self.__labels = torch.hstack((
@@ -330,165 +269,17 @@ def loss_func(
     Definition of the loss functions
     """
 
-    if loss_name == "l2_builtin":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        p = torch.exp(-torch.norm(left_mean - right_mean, dim=1) ** 2)
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
-
-    elif loss_name == "l2_05builtin":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        p = torch.exp(-0.5*torch.norm(left_mean - right_mean, dim=1) ** 2)
-        return torch.nn.functional.binary_cross_entropy(p, labels, reduction='mean')
-
-    elif loss_name == "l2_025builtin":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        #
-        mean_squared_diff = (left_mean - right_mean)**2 * 0.5
-        #
-        log_expectation = -0.25 * (mean_squared_diff).sum(dim=1)
-
-        return torch.nn.functional.binary_cross_entropy(torch.exp(log_expectation), labels, reduction='mean')
-
-    elif loss_name == "l2_truncated1_implementation":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
-        output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(-squared_dist, -1, 0)) + 1e-6)
-        return output.mean()
-
-    elif loss_name == "l2_truncated2_implementation":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
-        output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(-squared_dist, -2, 0)) + 1e-6)
-        return output.mean()
-
-    elif loss_name == "l2_implementation":
+    if loss_name == "l2":
 
         left_mean = left_mean
         right_mean = right_mean
 
         squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
         output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(-squared_dist) + 1e-6)
-        return output.mean()
-
-    elif loss_name == "l2_constrained_v1":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
-        squared_dist =  torch.maximum(torch.log(torch.asarray([[2.]])), squared_dist)
-        output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(-squared_dist) + 1e-6)
-        return output.mean()
-
-    elif loss_name == "l2_constrained_v2":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        dist = torch.norm(left_mean - right_mean, dim=1)
-        second_part =  torch.minimum(
-            (1-dist)**2, -torch.log(1 - torch.exp(-dist**2) + 1e-6)
-        )
-        output = labels * dist**2 + (1 - labels) * second_part
-        return output.mean()
-
-    elif loss_name == "l2_constrained_v3":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        dist = torch.norm(left_mean - right_mean, dim=1)
-        second_part =  torch.minimum(
-            torch.nn.functional.relu(1-dist)**2, -torch.log(1 - torch.exp(-dist**2) + 1e-6)
-        )
-        output = labels * dist**2 + (1 - labels) * second_part
-        return output.mean()
-
-    elif loss_name == "l2_constrained_v4":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        dist = torch.norm(left_mean - right_mean, dim=1)
-        second_part =  torch.minimum(
-            torch.nn.functional.relu(1-dist**2), -torch.log(1 - torch.exp(-dist**2) + 1e-6)
-        )
-        output = labels * dist**2 + (1 - labels) * second_part
-        return output.mean()
-
-    elif loss_name == "l2_constrained_v5":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        dist = torch.norm(left_mean - right_mean, dim=1)
-
-        second_part = -torch.log(1 - torch.exp(-dist**2) + 1e-6)
-
-        idx = dist > torch.sqrt(torch.log(torch.asarray([2.])))
-        second_part[idx] = torch.nn.functional.relu(1-dist[idx]**2) # we need relu because dist can be greater than 1
-
-        output = labels * dist**2 + (1 - labels) * second_part
-        return output.mean()
-
-    elif loss_name == "l2_constrained_v6":
-
-        left_mean = left_mean
-        right_mean = right_mean
-
-        dist = torch.norm(left_mean - right_mean, dim=1)
-
-        second_part = -torch.log(1 - torch.exp(-dist**2) + 1e-6)
-
-        idx = dist <= torch.sqrt(torch.log(torch.asarray([2.])))
-        second_part[idx] = 1-dist[idx]**2
-
-        output = labels * dist**2 + (1 - labels) * second_part
-        return output.mean()
-
-    elif loss_name == "hinge":
-
-        dist = torch.norm(left_mean - right_mean, p=2, dim=1)
-        output = labels * (dist ** 2) + (1 - labels) * torch.nn.functional.relu(1 - dist) ** 2
         return output.mean()
 
     elif loss_name == "mahalanobis":
 
-        if not include_std:
-
-            # Compute the term (m_i - m_j)^2
-            mean_squared_diff = (left_mean - right_mean)**2 * 0.5
-
-            # Compute the log expectation
-            log_expectation = -0.5 * (mean_squared_diff).sum(dim=1)
-
-        else:
-
-            # Compute the term (m_i - m_j)^2
-            mean_squared_diff = (left_mean - right_mean)**2 * (0.5 / (left_cov + right_cov))
-
-            # Compute the log expectation
-            log_expectation = -0.5*(mean_squared_diff).sum(dim=1)
-
-        return torch.nn.functional.binary_cross_entropy(torch.exp(log_expectation), labels, reduction='mean')
-
-    elif loss_name == "mahalanobis_truncated1":
-
         # Compute the term (m_i - m_j)^2
         squared_diff = (left_mean - right_mean) ** 2
 
@@ -508,48 +299,6 @@ def loss_func(
         output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -1, 0)) + 1e-6)
         return output.mean()
 
-    elif loss_name == "mahalanobis_truncated2":
-
-        # Compute the term (m_i - m_j)^2
-        squared_diff = (left_mean - right_mean) ** 2
-
-        if not include_std:
-
-            # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 4.
-
-        else:
-
-            # Compute the term (m_i - m_j)^2 / (s_i + s_j)
-            squared_diff = squared_diff / (left_cov + right_cov)
-
-            # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1)
-
-        output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -1, 0)) + 1e-6)
-        return output.mean()
-
-    elif loss_name == "mahalanobis_truncated1_with_scale":
-
-        # Compute the term (m_i - m_j)^2
-        squared_diff = (left_mean - right_mean) ** 2
-
-        if not include_std:
-
-            # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 4.
-
-        else:
-
-            # Compute the term (m_i - m_j)^2 / (s_i + s_j)
-            squared_diff = squared_diff / (left_cov + right_cov)
-
-            # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1)
-
-        scale_term = 2**(-right_mean.shape[1]/2)
-        output = -labels * log_expectation - (1 - labels) * torch.log(1 - scale_term*torch.exp(torch.nn.functional.threshold(log_expectation, -1, 0)) + 1e-6)
-        return output.mean()
 
     else:
         raise ValueError(f"Unknown loss function name: {loss_name}")
@@ -759,27 +508,63 @@ def main_worker(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train the model')
-    parser.add_argument('--input', type=str, help='Input sequence file', required=True)
-    parser.add_argument('--output', type=str, help='Model file path to save', required=True)
-    parser.add_argument('--checkpoint', type=str, default="", help='Checkpoint file path to load')
-    parser.add_argument('--k', type=int, default=4, help='k value')
-    parser.add_argument('--out_dim', type=int, default=256, help='dimension value')
-    parser.add_argument('--neg_sample_per_pos', type=int, default=200, help='Negative sample ratio')
-    parser.add_argument('--max_seq_num', type=int, default=100000, help='Maximum number of sequences to get from the file')
-    parser.add_argument('--epoch', type=int, default=100, help='Epoch number')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
-    parser.add_argument('--strategy', type=str, default="sequential", help='Learning starting strategy (sequential, mean_only, var_only, together)')
-    parser.add_argument('--batch_size', type=int, default=10000, help='Batch size (0: no batch)')
-    parser.add_argument('--save_every', type=int, default=0, help='Save checkpoint every x epochs (0 for no checkpoint)')
-    parser.add_argument('--distributed', type=int, default=0, help='Use distributed training (0: no, 1: yes)')
-    parser.add_argument('--device', type=str, default='cpu', help='Device to use (cpu, mps or gpu)')
-    parser.add_argument('--workers', type=int, default=2, help='Number of data loading workers')
-    parser.add_argument('--loss_name', type=str, default="mahalanobis", help='Loss function (l2, mahalanobis)')
-    parser.add_argument('--log_dir', type=str, default="", help='Path directory to save the log file')
-    parser.add_argument('--seed', type=int, default=1, help='Seed for random number generator')
-    parser.add_argument('--pair_strategy', type=str, default="standard", help='standard | tn')
 
+    parser = argparse.ArgumentParser(description='Train the model')
+    parser.add_argument(
+        '--input', type=str, help='Input DNA sequences file', required=True
+    )
+    parser.add_argument(
+        '--output', type=str, help='Model file path to save', required=True
+    )
+    parser.add_argument(
+        '--checkpoint', type=str, default="", help='Checkpoint file path to load'
+    )
+    parser.add_argument(
+        '--k', type=int, default=4, help='k value'
+    )
+    parser.add_argument(
+        '--out_dim', type=int, default=256, help='Output dimension value'
+    )
+    parser.add_argument(
+        '--neg_sample_per_pos', type=int, default=200, help='Negative samples count per positive'
+    )
+    parser.add_argument(
+        '--max_seq_num', type=int, default=100000, help='Maximum number of sequences to get from the file'
+    )
+    parser.add_argument(
+        '--epoch', type=int, default=50, help='Epoch number'
+    )
+    parser.add_argument(
+        '--lr', type=float, default=0.001, help='Learning rate'
+    )
+    parser.add_argument(
+        '--strategy', type=str, default="sequential",
+        help='Learning starting strategy (sequential, mean_only, var_only, together)'
+    )
+    parser.add_argument(
+        '--batch_size', type=int, default=100000, help='Batch size (0: no batch)'
+    )
+    parser.add_argument(
+        '--save_every', type=int, default=5, help='Save checkpoint every x epochs (0 for no checkpoint)'
+    )
+    parser.add_argument(
+        '--distributed', type=int, default=0, help='Use distributed training (0: no, 1: yes)'
+    )
+    parser.add_argument(
+        '--device', type=str, default='cpu', help='Device to use (cpu, mps or gpu)'
+    )
+    parser.add_argument(
+        '--workers', type=int, default=2, help='Number of data loading workers'
+    )
+    parser.add_argument(
+        '--loss_name', type=str, default="mahalanobis", help='Loss function (l2, mahalanobis)'
+    )
+    parser.add_argument(
+        '--log_dir', type=str, default="", help='Path directory to save the log file'
+    )
+    parser.add_argument(
+        '--seed', type=int, default=1, help='Seed for random number generator'
+    )
 
     args = parser.parse_args()
 
@@ -821,7 +606,6 @@ if __name__ == "__main__":
     print(f"\t- Number of data loading workers: {args.workers}")
     print(f"\t- Seed value: {args.seed}")
     print(f"\t- Output model name: {os.path.basename(args.output)}")
-    print(f"\t- Pair strategy: {args.pair_strategy}")
 
     ### Read the dataset and construct the data loader
     training_dataset = PairDataset(
