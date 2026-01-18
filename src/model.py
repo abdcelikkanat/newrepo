@@ -610,7 +610,7 @@ if __name__ == "__main__":
     ### Read the dataset and construct the data loader
     training_dataset = PairDataset(
         file_path=args.input, k=args.k, neg_sample_per_pos=args.neg_sample_per_pos, max_seq_num=args.max_seq_num,
-        seed=args.seed, pair_strategy=args.pair_strategy,
+        seed=args.seed,
     )
     # Define the arguments for the main worker function
     arguments = (
