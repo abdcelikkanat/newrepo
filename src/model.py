@@ -174,34 +174,30 @@ class Model(torch.nn.Module):
         set_seed(seed)
 
         # Define the layers
-        self.linear1_mean = torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float)
-        self.batch1_mean = torch.nn.BatchNorm1d(512, dtype=torch.float)
-        self.activation1_mean = torch.nn.Sigmoid()
-        self.dropout1_mean = torch.nn.Dropout(0.2)
-        self.linear2_mean = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
+        self.mean = torch.nn.Sequential(
+            torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float),
+            torch.nn.BatchNorm1d(512, dtype=torch.float),
+            torch.nn.Sigmoid(),
+            torch.nn.Dropout(0.2),
+            torch.nn.Linear(512, self.__out_dim, dtype=torch.float),
+        )
 
-        self.linear1_std = torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float)
-        self.batch1_std = torch.nn.BatchNorm1d(512, dtype=torch.float)
-        self.activation1_std = torch.nn.Sigmoid()
-        self.dropout1_std = torch.nn.Dropout(0.2)
-        self.linear2_std = torch.nn.Linear(512, self.__out_dim, dtype=torch.float)
+        self.std = torch.nn.Sequential(
+            torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float),
+            torch.nn.BatchNorm1d(512, dtype=torch.float),
+            torch.nn.Sigmoid(),
+            torch.nn.Dropout(0.2),
+            torch.nn.Linear(512, self.__out_dim, dtype=torch.float),
+        )
 
 
     def encoder(self, kmers: torch.Tensor):
         """
         For given kmers, return the mean and std
         """
-        h = self.linear1_mean(kmers)
-        h = self.batch1_mean(h)
-        h = self.activation1_mean(h)
-        h = self.dropout1_mean(h)
-        mean = self.linear2_mean(h)
+        mean = self.mean(kmers)
 
-        h = self.linear1_std(kmers)
-        h = self.batch1_std(h)
-        h = self.activation1_std(h)
-        h = self.dropout1_std(h)
-        log_cov = self.linear2_std(h)
+        log_cov = self.std(kmers)
         cov = torch.exp(log_cov)
 
         return mean, cov
@@ -243,7 +239,6 @@ class Model(torch.nn.Module):
         ).to(torch.float)
 
         with torch.no_grad():
-            self.eval()
 
             if normalized:
                 kmers = kmers / kmers.sum(dim=1, keepdim=True)
@@ -286,7 +281,7 @@ def loss_func(
         if not include_std:
 
             # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 4.
+            log_expectation = -squared_diff.sum(dim=1)
 
         else:
 
@@ -294,7 +289,7 @@ def loss_func(
             squared_diff = squared_diff / (left_cov + right_cov)
 
             # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 4.
+            log_expectation = -squared_diff.sum(dim=1)
 
         output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -1, 0)) + 1e-6)
         return output.mean()
@@ -363,6 +358,7 @@ def train(
             param.requires_grad = False
         else:
             model_params.append(param)
+
     ### Define the loss function.
     # Since we won't train the std weights at the beginning, we will not include them in the loss function
     criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
@@ -371,9 +367,22 @@ def train(
 
     ### Start training
     print(f"+ Training started.")
-    # Switch the model to training mode
-    model.train()
+
+    # Set the correct training/evaluation modes
+    if strategy in ["mean_only", "sequential"]:
+        model.mean.train()
+        model.std.eval()
+    elif strategy == "var_only":
+        model.std.train()
+        model.mean.eval()
+    elif strategy == "together":
+        model.mean.train()
+        model.std.train()
+    else:
+        raise ValueError(f"Unknown strategy name: {strategy}")
+
     for current_epoch in range(epoch_num):
+
         # Set the epoch for the sampler
         if distributed:
             data_loader.sampler.set_epoch(current_epoch)
@@ -397,6 +406,10 @@ def train(
             criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
             if (distributed and device == 0) or (not distributed):
                 print(f"   - Only the covariance parameters are included in the optimizer now! (lr = {lr})")
+
+            # Set the correct model modes
+            model.mean.eval()
+            model.std.eval()
 
         ## Run the training for the current epoch
         init_time = time.time()
@@ -443,6 +456,7 @@ def train(
         model.save(output_path)
         print(f"+ Model saved to {output_path}")
     print(f"\t- Completed (Device {device}).")
+
 
 def main_worker(
         device, world_size, distributed:bool, training_dataset: PairDataset, output_path: str, checkpoint: str,
