@@ -240,6 +240,8 @@ class Model(torch.nn.Module):
 
         with torch.no_grad():
 
+            self.eval()
+
             if normalized:
                 kmers = kmers / kmers.sum(dim=1, keepdim=True)
 
