@@ -283,7 +283,7 @@ def loss_func(
         if not include_std:
 
             # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1)
+            log_expectation = -squared_diff.sum(dim=1) / 4
 
         else:
 
@@ -291,32 +291,10 @@ def loss_func(
             squared_diff = squared_diff / (left_cov + right_cov)
 
             # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1)
+            log_expectation = -squared_diff.sum(dim=1) / 4
 
         output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -1, 0)) + 1e-6)
         return output.mean()
-
-    elif loss_name == "mahalanobis4":
-
-        # Compute the term (m_i - m_j)^2
-        squared_diff = (left_mean - right_mean) ** 2
-
-        if not include_std:
-
-            # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 4.
-
-        else:
-
-            # Compute the term (m_i - m_j)^2 / (s_i + s_j)
-            squared_diff = squared_diff / (left_cov + right_cov)
-
-            # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 4.
-
-        output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -1, 0)) + 1e-6)
-        return output.mean()
-
 
     else:
         raise ValueError(f"Unknown loss function name: {loss_name}")
@@ -432,7 +410,7 @@ def train(
 
             # Set the correct model modes
             model.mean.eval()
-            model.std.eval()
+            model.std.train()
 
         ## Run the training for the current epoch
         init_time = time.time()
