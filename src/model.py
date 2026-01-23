@@ -283,7 +283,7 @@ def loss_func(
         if not include_std:
 
             # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 4
+            log_expectation = -squared_diff.sum(dim=1) / 1.
 
         else:
 
