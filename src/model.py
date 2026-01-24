@@ -58,7 +58,7 @@ class KmerConverter:
 
 
 class PairDataset(Dataset):
-    def __init__(self, file_path, k, neg_sample_per_pos=1000, max_seq_num=0, verbose=True, seed=0):
+    def __init__(self, file_path, k, neg_sample_per_pos=1000, max_seq_num=0, input_type='dna', verbose=True, seed=0):
         """
         PairDataset constructor
         """
@@ -97,8 +97,12 @@ class PairDataset(Dataset):
             if line_no == chosen_lines[chosen_line_idx]:
                 left_seq, right_seq = line.strip().split(',')
 
-                left_kmer_profiles.append(self.__kc.seq2kmer(left_seq))
-                right_kmer_profiles.append(self.__kc.seq2kmer(right_seq))
+                left_kmer_profiles.append(
+                    np.asarray(list(map(float, left_seq.split()))) if input_type.lower() == 'kmer' else self.__kc.seq2kmer(left_seq)
+                )
+                right_kmer_profiles.append(
+                    np.asarray(list(map(float, right_seq.split()))) if input_type.lower() == 'kmer' else self.__kc.seq2kmer(right_seq)
+                )
 
                 # Increment the chosen_line_idx
                 chosen_line_idx += 1
@@ -229,14 +233,22 @@ class Model(torch.nn.Module):
         """
         return self.__seed
 
-    def seq2emb(self, sequences:list, normalized:bool=True):
+    def seq2emb(self, sequences:list, normalized:bool=True, input_type='dna'):
         """
         Get the embeddings for the given list of DNA sequences
         """
 
-        kmers = torch.from_numpy(
-            np.asarray([self.__kc.seq2kmer(seq, normalized=normalized) for seq in sequences])
-        ).to(torch.float)
+        if input_type.lower() == 'dna':
+
+            kmers = torch.from_numpy(
+                np.asarray([self.__kc.seq2kmer(seq, normalized=normalized) for seq in sequences])
+            ).to(torch.float)
+
+        elif input_type.lower() == 'kmer':
+            kmers = torch.from_numpy(np.asarray(sequences)).to(torch.float)
+
+        else:
+            raise ValueError(f"Unknown input type: {input_type}")
 
         with torch.no_grad():
 
@@ -283,7 +295,7 @@ def loss_func(
         if not include_std:
 
             # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 1.
+            log_expectation = -squared_diff.sum(dim=1) / 4.
 
         else:
 
@@ -529,6 +541,9 @@ if __name__ == "__main__":
         '--input', type=str, help='Input DNA sequences file', required=True
     )
     parser.add_argument(
+        '--input_type', type=str, help='Input file type (dna, kmer)', required=False, default='dna'
+    )
+    parser.add_argument(
         '--output', type=str, help='Model file path to save', required=True
     )
     parser.add_argument(
@@ -624,8 +639,8 @@ if __name__ == "__main__":
 
     ### Read the dataset and construct the data loader
     training_dataset = PairDataset(
-        file_path=args.input, k=args.k, neg_sample_per_pos=args.neg_sample_per_pos, max_seq_num=args.max_seq_num,
-        seed=args.seed,
+        file_path=args.input, k=args.k, neg_sample_per_pos=args.neg_sample_per_pos, input_type=args.input_type,
+        max_seq_num=args.max_seq_num, seed=args.seed,
     )
     # Define the arguments for the main worker function
     arguments = (
