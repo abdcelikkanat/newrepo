@@ -166,4 +166,5 @@ cython_debug/
 *.err
 *.out
 models
-embeddings
+logs
+results

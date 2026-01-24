@@ -24,38 +24,24 @@ mkdir ${RESULTS_FOLDER}/plant
 fi
 
 # Define the model name
-POSTFIX="_metric-l2"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=1.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_builtin_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_implementation_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_constrained_v1_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_builtin_strategy=mean_only_seed=2.model.epoch_40.checkpoint"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=25_lr=0.001_batch=100000_loss=l2_builtin_strategy=mean_only_seed=2_hingePLUSl2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_05builtin_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_constrained_v2_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_025builtin_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_constrained_v3_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_constrained_v4_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_constrained_v5_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_constrained_v5_strategy=mean_only_seed=2.model.epoch_10.checkpoint"
-MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_constrained_v6_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=l2_constrained_v6_strategy=mean_only_seed=2.model.epoch_10.checkpoint"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=hinge_strategy=mean_only_seed=2.model"
-#MODELFILE="model_k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=hinge_strategy=mean_only_seed=2.model.epoch_10.checkpoint"
-#MODELFILE="${MODELFILE}.epoch_${TEMP_EPOCH}.checkpoint"
+#MODELFILE="k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=1.model"
+#MODELFILE="k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=2.model"
+#MODELFILE="k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=3.model"
+#MODELFILE="k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=4.model"
+MODELFILE="k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=5.model"
 
 # Define the evaluation parameters
-SPECIES_LIST=("marine") #("reference")
+SPECIES_LIST=("marine") #("reference" "plant" "marine" )
 DATA_DIR=${BASEFOLDER}/../../kadir/dataset/
 FEATURE_FOLDER=${BASEFOLDER}/temp_features${POSTFIX}
 MODEL_PATH=${BASEFOLDER}/models/${MODELFILE}
 MODELLIST=ours
-METRIC="l2" #-----
+METRIC="l2" #"mahalanobis" #"mahalanobis" #"l2" #-----
 SAMPLE_IDS="5,6"
 CHUNK_SIZE=100
 #FILTER_STRATEGY="before"
 #FILTER_RATIO="0.01"
+POSTFIX="_metric-${METRIC}"
 
 for SPECIES in ${SPECIES_LIST[@]}
 do
@@ -80,6 +66,7 @@ CMD=$CMD" --sample_ids ${SAMPLE_IDS}"
 CMD=$CMD" --output ${OUTPUT_PATH}"
 $CMD
 
+# Remove the feature folder
 rm -rf ${FEATURE_FOLDER}
 
 done

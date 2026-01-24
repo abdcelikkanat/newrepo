@@ -8,7 +8,6 @@
 #SBATCH --mail-user=abce@cs.aau.dk
 #SBATCH --time=48:00:00  #  time limit in dd:hh:mm:ss format. 
 
-
 #nvidia-smi
 set -eu
 
@@ -19,10 +18,15 @@ export NCCL_SOCKET_IFNAME=bond0
 echo "port" ${MASTER_PORT} "==" ${MASTER_ADDR} "==" ${SLURM_JOB_NODELIST}
 
 # Define the global variables
-BASEFOLDER=/nfs/home/cs.aau.dk/zs74qz/workspace/icml
+BASEFOLDER=/nfs/home/cs.aau.dk/zs74qz/workspace/icml1
 PYTHON=/nfs/home/cs.aau.dk/zs74qz/miniconda3/envs/kum/bin/python
 SCRIPT_PATH=${BASEFOLDER}/src/model.py
 INPUT_PATH=$BASEFOLDER/../../kadir/dataset/train_2m.csv
+SEED=1
 
-# Run the bash script
-source ${BASEFOLDER}/sh/run_model.sh "$BASEFOLDER" "$PYTHON" "$SCRIPT_PATH" "$INPUT_PATH"
+# Train the model for mean vectors for 50 epochs
+#source ${BASEFOLDER}/sh/train_model.sh "${BASEFOLDER}" "$PYTHON" "$SCRIPT_PATH" "$INPUT_PATH" "${SEED}" "50" "mean_only"
+
+# Train the model for variance vectors for 25 epochs
+CHECKPOINT_NAME="k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=${SEED}"
+source ${BASEFOLDER}/sh/train_model.sh "${BASEFOLDER}" "$PYTHON" "$SCRIPT_PATH" "$INPUT_PATH" "${SEED}" "25" "var_only" "${CHECKPOINT_NAME}"
