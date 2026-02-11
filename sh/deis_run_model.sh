@@ -18,14 +18,14 @@ export NCCL_SOCKET_IFNAME=bond0
 echo "port" ${MASTER_PORT} "==" ${MASTER_ADDR} "==" ${SLURM_JOB_NODELIST}
 
 # Define the global variables
-BASEFOLDER=/nfs/home/cs.aau.dk/zs74qz/workspace/icml1
+BASEFOLDER=/nfs/home/cs.aau.dk/zs74qz/workspace/icml_final
 PYTHON=/nfs/home/cs.aau.dk/zs74qz/miniconda3/envs/kum/bin/python
 SCRIPT_PATH=${BASEFOLDER}/src/model.py
 INPUT_PATH=$BASEFOLDER/../../kadir/dataset/train_2m.csv
-SEED=1
+SEED=3
 
 # Train the model for mean vectors for 50 epochs
-#source ${BASEFOLDER}/sh/train_model.sh "${BASEFOLDER}" "$PYTHON" "$SCRIPT_PATH" "$INPUT_PATH" "${SEED}" "50" "mean_only"
+source ${BASEFOLDER}/sh/train_model.sh "${BASEFOLDER}" "$PYTHON" "$SCRIPT_PATH" "$INPUT_PATH" "${SEED}" "50" "mean_only"
 
 # Train the model for variance vectors for 25 epochs
 CHECKPOINT_NAME="k=4_d=256_negperpos=200_maxseq=100000_epoch=50_lr=0.001_batch=100000_loss=mahalanobis_strategy=mean_only_seed=${SEED}"
