@@ -45,28 +45,28 @@ def remove_sequences(filter_ratios, thresholds, sequence_num, sorted_seq_indices
         )[1:]  # We do not consider the garbage class
         current_class_recall_scores.sort()
 
-        current_class_precision_scores = sklearn.metrics.precision_score(
-            y_true=current_ground_truth_labels, y_pred=current_pred_labels, labels=all_labels, verage=None
-        )[1:]  # We do not consider the garbage class
-        current_class_precision_scores.sort()
+        #current_class_precision_scores = sklearn.metrics.precision_score(
+        #    y_true=current_ground_truth_labels, y_pred=current_pred_labels, labels=all_labels, verage=None
+        #)[1:]  # We do not consider the garbage class
+        #current_class_precision_scores.sort()
 
-        current_class_f1_scores = sklearn.metrics.f1_score(
-            y_true=current_ground_truth_labels, y_pred=current_pred_labels, labels=all_labels, verage=None
-        )[1:]  # We do not consider the garbage class
-        current_class_f1_scores.sort()
+        #current_class_f1_scores = sklearn.metrics.f1_score(
+        #    y_true=current_ground_truth_labels, y_pred=current_pred_labels, labels=all_labels, verage=None
+        #)[1:]  # We do not consider the garbage class
+        #current_class_f1_scores.sort()
 
         # Calculate the recall scores for different thresholds
         recall_list.append(
             [sum(current_class_recall_scores > threshold) for threshold in thresholds]
         )
-        # Calculate the precision scores for different thresholds
-        precision_list.append(
-            [sum(current_class_precision_scores > threshold) for threshold in thresholds]
-        )
-        # Calculate the f1 scores for different thresholds
-        f1_list.append(
-            [sum(current_class_f1_scores > threshold) for threshold in thresholds]
-        )
+        ## Calculate the precision scores for different thresholds
+        #precision_list.append(
+        #    [sum(current_class_precision_scores > threshold) for threshold in thresholds]
+        #)
+        ## Calculate the f1 scores for different thresholds
+        #f1_list.append(
+        #    [sum(current_class_f1_scores > threshold) for threshold in thresholds]
+        #)
 
     return recall_list, precision_list, f1_list
 
