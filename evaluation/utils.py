@@ -98,7 +98,7 @@ def get_embedding(
 
     # Define the batch size to get the embeddings
     # This is for inference only, not training and it is important for the memory requirements
-    batch_size = 10  # MODEL2BATCH_SIZE[model_name]
+    batch_size = 256  # MODEL2BATCH_SIZE[model_name]
 
     # Load the embedding file if it exits
     if os.path.exists(embedding_file_path):
@@ -167,7 +167,7 @@ def get_embedding(
             embedding = calculate_tnf(dna_sequences, k=k)
             output = normalize(embedding, norm=norm)
 
-        elif model_name == "ours":
+        elif model_n ame == "ours":
 
             kwargs, model_state_dict = torch.load(model_path, map_location=torch.device("cpu"))
             model = Model(**kwargs)
