@@ -1,0 +1,14 @@
+
+27/01/2026 09:15:38model: ours, species: marine, sample_id: 5, binning
+recall_results: [300, 269, 257, 249, 242, 238, 230, 214, 187]
+precision_results: [308, 281, 265, 249, 229, 209, 203, 199, 192]
+f1_results: [312, 263, 246, 243, 231, 223, 204, 194, 176]
+threshold: 0.9
+
+
+27/01/2026 16:37:27model: ours, species: marine, sample_id: 6, binning
+recall_results: [318, 280, 269, 265, 257, 253, 244, 235, 202]
+precision_results: [335, 305, 282, 262, 249, 234, 218, 211, 201]
+f1_results: [330, 276, 264, 258, 250, 237, 226, 207, 192]
+threshold: 0.9
+

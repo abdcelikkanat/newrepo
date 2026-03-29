@@ -1,0 +1,14 @@
+
+27/01/2026 03:03:36model: ours, species: reference, sample_id: 5, binning
+recall_results: [189, 186, 184, 184, 181, 176, 170, 163, 150]
+precision_results: [191, 191, 187, 186, 181, 176, 174, 172, 163]
+f1_results: [191, 187, 186, 185, 183, 182, 174, 158, 148]
+threshold: 0.9
+
+
+27/01/2026 03:29:31model: ours, species: reference, sample_id: 6, binning
+recall_results: [181, 181, 181, 181, 178, 176, 172, 165, 157]
+precision_results: [181, 181, 181, 181, 179, 175, 171, 169, 166]
+f1_results: [181, 181, 181, 181, 180, 180, 173, 163, 153]
+threshold: 0.9
+

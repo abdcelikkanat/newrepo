@@ -1,0 +1,14 @@
+
+24/01/2026 22:47:34model: ours, species: plant, sample_id: 5, binning
+recall_results: [98, 92, 88, 87, 78, 74, 70, 63, 54]
+precision_results: [106, 101, 94, 88, 83, 75, 70, 67, 58]
+f1_results: [103, 92, 89, 85, 80, 77, 66, 57, 48]
+threshold: 0.9
+
+
+25/01/2026 00:38:24model: ours, species: plant, sample_id: 6, binning
+recall_results: [93, 83, 79, 77, 73, 68, 61, 55, 44]
+precision_results: [99, 91, 87, 77, 75, 67, 64, 57, 55]
+f1_results: [96, 81, 76, 73, 67, 64, 60, 52, 44]
+threshold: 0.9
+
