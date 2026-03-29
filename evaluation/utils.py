@@ -155,7 +155,7 @@ def get_embedding(
 
             embedding = calculate_llm_embedding(
                 dna_sequences,
-                model_name_or_path=model_path,
+                model_name_or_path="zhihan1996/DNABERT-S",
                 model_max_length=5000,
                 batch_size=batch_size
             )
