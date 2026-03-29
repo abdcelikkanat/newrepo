@@ -361,11 +361,20 @@ def calculate_llm_embedding(dna_sequences, model_name_or_path, model_max_length=
 
     is_hyenadna = "hyenadna" in model_name_or_path
     is_nt = "nucleotide-transformer" in model_name_or_path
+    is_dnabert2 = "dnabert-2" in model_name_or_path.lower()
 
     if is_nt:
         model = transformers.AutoModelForMaskedLM.from_pretrained(
             model_name_or_path,
             trust_remote_code=True,
+        )
+    elif is_dnabert2:
+
+        config = transformers.models.bert.configuration_bert.BertConfig.from_pretrained(model_name_or_path)
+        model = transformers.AutoModelForMaskedLM.from_pretrained(
+            model_name_or_path,
+            trust_remote_code=True,
+            config=config,
         )
     else:
         model = transformers.AutoModel.from_pretrained(
