@@ -107,6 +107,8 @@ model2info = {
 
 if __name__ == "__main__":
 
+    from ptflops import get_model_complexity_info
+
     data_file_path = sys.argv[1]
     output_file_path = sys.argv[2]
     subsample_size = int(sys.argv[3]) if len(sys.argv) > 3 else 1000
@@ -136,10 +138,12 @@ if __name__ == "__main__":
         # Get the model
         model = get_model(model_name, model_name_or_path)
 
-        # Get the average time
-        model2time[model_name] = get_average_time(model2info=model2info, train_loader=train_loader)
+        macs, params = get_model_complexity_info(model)
 
-    # Save the output file
-    with open(output_file_path, 'w') as f:
-        for model_name in model2time:
-            f.write(f"{model_name}: {model2time[model_name]}\n")
+        # # Get the average time
+        # model2time[model_name] = get_average_time(model2info=model2info, train_loader=train_loader)
+
+    # # Save the output file
+    # with open(output_file_path, 'w') as f:
+    #     for model_name in model2time:
+    #         f.write(f"{model_name}: {model2time[model_name]}\n")

@@ -272,7 +272,7 @@ class Model(torch.nn.Module):
 
 def loss_func(
         left_mean: torch.Tensor, left_cov: torch.Tensor, right_mean: torch.Tensor, right_cov: torch.Tensor,
-        labels: torch.Tensor, loss_name:str = "mahalanobis", include_std:bool = True,
+        labels: torch.Tensor, threshold = 1.0, loss_name:str = "mahalanobis", include_std:bool = True,
 ):
     """
     Definition of the loss functions
@@ -305,7 +305,7 @@ def loss_func(
             # Compute the log expectation
             log_expectation = -squared_diff.sum(dim=1) / 1.
 
-        output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -1, 0)) + 1e-6)
+        output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -threshold, 0)) + 1e-6)
         return output.mean()
 
     else:
@@ -353,8 +353,8 @@ def train_single_epoch(device, model, criterion, optimizer, data_loader):
     return average_epoch_loss
 
 def train(
-        device, distributed, model, strategy, lr, loss_name, data_loader, epoch_num: int, save_every:int, output_path,
-        summary_writer
+        device, distributed, model, strategy, lr, threshold, loss_name, data_loader, epoch_num: int, save_every:int,
+        output_path, summary_writer
 ):
     # Check the strategy name
     assert strategy in ["sequential", "mean_only", "var_only", "together"], f"Unknown strategy name: {strategy}"
@@ -374,7 +374,7 @@ def train(
 
     ### Define the loss function.
     # Since we won't train the std weights at the beginning, we will not include them in the loss function
-    criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
+    criterion = partial(loss_func, threshold=threshold, loss_name=loss_name, include_std=include_std)
     # Define the optimizer
     optimizer = torch.optim.Adam(model_params, lr=lr)
 
@@ -416,7 +416,7 @@ def train(
             # Define the optimizer
             optimizer = torch.optim.Adam(std_params, lr=lr)
             # Define the loss function
-            criterion = partial(loss_func, loss_name=loss_name, include_std=include_std)
+            criterion = partial(loss_func, threshold=threshold, loss_name=loss_name, include_std=include_std)
             if (distributed and device == 0) or (not distributed):
                 print(f"   - Only the covariance parameters are included in the optimizer now! (lr = {lr})")
 
@@ -473,8 +473,8 @@ def train(
 
 def main_worker(
         device, world_size, distributed:bool, training_dataset: PairDataset, output_path: str, checkpoint: str,
-        k: int, out_dim: int, strategy:str, lr:float, epoch_num:int, batch_size:int, workers_num, save_every: int,
-        loss_name: str, log_dir:str, seed: int,
+        k: int, out_dim: int, strategy:str, lr:float, epoch_num:int, batch_size:int, threshold:float,
+        workers_num: int, save_every: int, loss_name: str, log_dir:str, seed: int,
 ):
     ### Initialize the device
     if distributed:
@@ -517,9 +517,9 @@ def main_worker(
 
     ### Train the model
     train(
-        device=device, distributed=distributed, model=model, strategy=strategy, lr=lr, loss_name=loss_name,
-        data_loader=training_loader, epoch_num=epoch_num, save_every=save_every, output_path=output_path,
-        summary_writer=summary_writer,
+        device=device, distributed=distributed, model=model, strategy=strategy, lr=lr, threshold=threshold,
+        loss_name=loss_name, data_loader=training_loader, epoch_num=epoch_num, save_every=save_every,
+        output_path=output_path, summary_writer=summary_writer,
     )
 
     # Close the summary writer
@@ -566,6 +566,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--lr', type=float, default=0.001, help='Learning rate'
+    )
+    parser.add_argument(
+        '--threshold', type=float, default=1.0, help='Threshold value'
     )
     parser.add_argument(
         '--strategy', type=str, default="sequential",
@@ -622,6 +625,7 @@ if __name__ == "__main__":
     print(f"\t- Epoch number: {args.epoch}")
     print(f"\t- Batch size: {args.batch_size}")
     print(f"\t- Learning rate: {args.lr}")
+    print(f"\t- Threshold value: {args.threshold}")
     print(f"\t- Output dimension: {args.out_dim}")
     print(f"\t- Negative sample per positive pair: {args.neg_sample_per_pos}")
     print(f"\t- Maximum number of sequence pairs to use: {args.max_seq_num}")
@@ -645,8 +649,8 @@ if __name__ == "__main__":
     # Define the arguments for the main worker function
     arguments = (
         world_size, args.distributed, training_dataset, args.output, args.checkpoint, args.k, args.out_dim,
-        args.strategy, args.lr, args.epoch, args.batch_size, args.workers, args.save_every, args.loss_name,
-        args.log_dir, args.seed,
+        args.strategy, args.lr, args.epoch, args.batch_size, args.threshold, args.workers, args.save_every,
+        args.loss_name, args.log_dir, args.seed,
     )
     if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
