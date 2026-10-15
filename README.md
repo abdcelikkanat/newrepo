@@ -1,4 +1,7 @@
-## K-mers for Uncertainty Modelling (KUM)
+## UncertainGen Adaptation for SemiBin2 Implementation
+
+#### TODO List
+- Check SummaryWriter can be also used for saving the output logs
 
 ### Setting up the pyhon environment
 You can install all the required packages by running the following commands:

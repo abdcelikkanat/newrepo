@@ -1,225 +1,68 @@
 import os
 import time
 import torch
-import random
 import argparse
-import itertools
-import numpy as np
 from torch import device
 from functools import partial
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data.distributed import DistributedSampler
+from src.utils import set_seed
+from src.tokenizer import KmerTokenizer
+from src.pairdataset import PairDataset
 
-# Helper functions
-def set_seed(seed: int):
-    """
-    Set the seed value for reproducibility
-    """
-    # Set the seed
-    random.seed(seed)
-    torch.manual_seed(seed)
+# def log1mexp(x: torch.Tensor):
+#     """
+#     Compute `log(1 - exp(-x))` in a numerically stable way for x > 0
+#     """
+#     log2 = torch.log(torch.tensor(2.0, dtype=x.dtype, device=x.device))
+#     return torch.where(
+#         x < log2, torch.log(-torch.expm1(-x)), torch.log1p(-torch.exp(-x))
+#     )
 
-def log1mexp(x: torch.Tensor):
-    """
-    Compute `log(1 - exp(-x))` in a numerically stable way for x > 0
-    """
-    log2 = torch.log(torch.tensor(2.0, dtype=x.dtype, device=x.device))
-    return torch.where(
-        x < log2, torch.log(-torch.expm1(-x)), torch.log1p(-torch.exp(-x))
-    )
-
-class KmerConverter:
-    def __init__(self, k):
-
-        # Define the letters, k-mer size, and the base complement
-        self.__k = k
-        self.__letters = ['A', 'C', 'G', 'T']
-        self.__kmer2id = {''.join(kmer): i for i, kmer in enumerate(itertools.product(self.__letters, repeat=self.__k))}
-        self.__kmers_num = len(self.__kmer2id)
-
-    def get_k(self):
-        return self.__k
-
-    def get_kmers_num(self):
-        return self.__kmers_num
-
-    def seq2kmer(self, seq:str, normalized:bool=True):
-
-        # Get the k-mer profile
-        kmer2id = [self.__kmer2id[seq[i:i + self.__k]] for i in range(len(seq) - self.__k + 1)]
-        kmer_profile = np.bincount(kmer2id, minlength=self.__kmers_num)
-
-        if normalized:
-            kmer_profile = kmer_profile / kmer_profile.sum()
-
-        return kmer_profile
-
-
-class PairDataset(Dataset):
-    def __init__(self, file_path, k, neg_sample_per_pos=1000, max_seq_num=0, input_type='dna', verbose=True, seed=0):
-        """
-        PairDataset constructor
-        """
-        # Set the parameters
-        self.__kmers = None # A tensor of shape N x D, storing the k-mer profiles
-        self.__indices = None # A tensor of shape L x 2, storing the indices of the positive and negative pairs
-        self.__labels = None  # A tensor of shape L, storing the labels of the pairs
-        self.__kc = KmerConverter(k)
-        self.__neg_sample_per_pos = neg_sample_per_pos
-
-        # Set the seed
-        set_seed(seed)
-
-        if verbose:
-            print(f"+ Reading the data file.")
-            print(f"\t- File path: {file_path}")
-            init_time = time.time()
-
-        # Get the number of lines
-        num_of_lines = sum(1 for _ in open(file_path, 'r'))
-
-        # If the max_read_num is set, then sample the line numbers to read
-        if max_seq_num > 0:
-            chosen_lines = random.sample(range(num_of_lines), max_seq_num)
-            chosen_lines.sort()
-        # Otherwise, read all the lines
-        else:
-            chosen_lines = list(range(num_of_lines))
-
-        # Read the file
-        chosen_line_idx = 0
-        left_kmer_profiles, right_kmer_profiles = [], []
-        f = open(file_path, 'r')
-        for line_no, line in enumerate(f):
-
-            if line_no == chosen_lines[chosen_line_idx]:
-                left_seq, right_seq = line.strip().split(',')
-
-                left_kmer_profiles.append(
-                    np.asarray(list(map(float, left_seq.split()))) if input_type.lower() == 'kmer' else self.__kc.seq2kmer(left_seq)
-                )
-                right_kmer_profiles.append(
-                    np.asarray(list(map(float, right_seq.split()))) if input_type.lower() == 'kmer' else self.__kc.seq2kmer(right_seq)
-                )
-
-                # Increment the chosen_line_idx
-                chosen_line_idx += 1
-                # If all the chosen lines have been read, then break
-                if chosen_line_idx >= len(chosen_lines):
-                    break
-        f.close()
-
-        # Combine the left and right k-mer profiles.
-        # The first half of the profiles are the left ones and the second half are the right ones
-        self.__kmers = torch.from_numpy(
-            np.asarray(left_kmer_profiles + right_kmer_profiles)
-        ).to(torch.float)
-
-        if verbose:
-            print(f"\t- Completed in {time.time() - init_time:.2f} seconds.")
-            # print the time information in 2 decimal points
-            print(f"\t- The input file contains: {num_of_lines} sequence pairs.")
-            print(f"\t- For training, {max_seq_num} sequence pairs will be used.")
-
-        # Construct the indices storing the positive and negative pairs
-        if verbose:
-            print(f"+ Constructing the indices for positive and negative sample pairs")
-            init_time = time.time()
-
-        # Sample 'pos_indices' positive pair indices
-        pos_indices = torch.vstack((
-            torch.arange(self.__kmers.shape[0] // 2, dtype=torch.long),
-            torch.arange(self.__kmers.shape[0] // 2, dtype=torch.long) + self.__kmers.shape[0] // 2
-        ))
-        # Sample 'neg_sample_per_pos' negative pair indices for each positive pair
-        temp_weights = torch.ones((self.__kmers.shape[0],), dtype=torch.float)
-        neg_indices = torch.vstack((
-            torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True),
-            torch.multinomial(temp_weights, pos_indices.shape[1] * self.__neg_sample_per_pos, replacement=True),
-        ))
-        # Concatenate the positive and negative indices
-        self.__indices = torch.hstack((pos_indices, neg_indices))
-        self.__labels = torch.hstack((
-            torch.ones((pos_indices.shape[1],), dtype=torch.float),
-            torch.zeros((neg_indices.shape[1],), dtype=torch.float))
-        )
-
-        if verbose:
-            print(f"\t- Completed in {time.time() - init_time:.2f} seconds.")
-            print(f"\t- Training dataset contains {pos_indices.shape[1]} positive pairs.")
-            print(f"\t- Training dataset contains {neg_indices.shape[1]} negative pairs.")
-
-    def __len__(self):
-        """
-        Return the number of pairs
-        """
-        return self.__indices.shape[1]
-
-    def __getitem__(self, idx):
-
-        return torch.index_select(self.__kmers, dim=0, index=self.__indices[0, idx]), torch.index_select(self.__kmers, dim=0, index=self.__indices[1, idx]), self.__labels[idx]
 
 
 class Model(torch.nn.Module):
-    def __init__(self, k:int, out_dim:int=256, seed:int=0):
+    def __init__(self, input_dim:int, out_dim:int=100, seed:int=0):
         """
         Initialize the VIB model
         """
         super(Model, self).__init__()
 
         # Set the parameters
-        self.__k = k
+        self.__input_dim = input_dim
         self.__out_dim = out_dim
-        # Define the k-mer converter object
-        self.__kc = KmerConverter(self.__k)
+
         # Set the seed
         set_seed(seed)
 
         # Define the layers
-        self.mean = torch.nn.Sequential(
-            torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float),
-            torch.nn.BatchNorm1d(512, dtype=torch.float),
-            torch.nn.Sigmoid(),
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Linear(self.__input_dim, 512),
+            torch.nn.BatchNorm1d(512),
+            torch.nn.LeakyReLU(),
             torch.nn.Dropout(0.2),
-            torch.nn.Linear(512, self.__out_dim, dtype=torch.float),
+            torch.nn.Linear(512, 512),
+            torch.nn.BatchNorm1d(512),
+            torch.nn.LeakyReLU(),
+            torch.nn.Dropout(0.2),
+            torch.nn.Linear(512, self.__out_dim),
         )
 
-        self.std = torch.nn.Sequential(
-            torch.nn.Linear(self.__kc.get_kmers_num(), 512, dtype=torch.float),
-            torch.nn.BatchNorm1d(512, dtype=torch.float),
-            torch.nn.Sigmoid(),
-            torch.nn.Dropout(0.2),
-            torch.nn.Linear(512, self.__out_dim, dtype=torch.float),
-        )
-
-
-    def encoder(self, kmers: torch.Tensor):
-        """
-        For given kmers, return the mean and std
-        """
-        mean = self.mean(kmers)
-
-        log_cov = self.std(kmers)
-        cov = torch.exp(log_cov)
-
-        return mean, cov
-
-    def forward(self, left_kmers: torch.Tensor, right_kmers:torch.Tensor):
+    def forward(self, input: torch.Tensor):
         """
         Forward pass
         """
-        left_mean, left_cov = self.encoder(left_kmers)
-        right_mean, right_cov = self.encoder(right_kmers)
+        embs = self.encoder(input)
 
-        return left_mean, left_cov, right_mean, right_cov
+        return embs
 
-    def get_k(self):
+    def get_input_dim(self):
         """
-        Return the k value
+        Return the input dimension
         """
-        return self.__k
+        return self.__input_dim
 
     def get_out_dim(self):
         """
@@ -233,46 +76,18 @@ class Model(torch.nn.Module):
         """
         return self.__seed
 
-    def seq2emb(self, sequences:list, normalized:bool=True, input_type='dna'):
-        """
-        Get the embeddings for the given list of DNA sequences
-        """
-
-        if input_type.lower() == 'dna':
-
-            kmers = torch.from_numpy(
-                np.asarray([self.__kc.seq2kmer(seq, normalized=normalized) for seq in sequences])
-            ).to(torch.float)
-
-        elif input_type.lower() == 'kmer':
-            kmers = torch.from_numpy(np.asarray(sequences)).to(torch.float)
-
-        else:
-            raise ValueError(f"Unknown input type: {input_type}")
-
-        with torch.no_grad():
-
-            self.eval()
-
-            if normalized:
-                kmers = kmers / kmers.sum(dim=1, keepdim=True)
-
-            means, covs = self.encoder(kmers)
-
-        return means.detach().numpy(), covs.detach().numpy()
-
     def save(self, path:str):
         """
         Save the model
         """
-        torch.save(
-            [{'k': self.get_k(), 'out_dim': self.get_out_dim()}, self.state_dict()], path
-        )
+        torch.save([
+            {'input_dim': self.get_input_dim(), 'out_dim': self.get_out_dim(), 'seed': self.get_seed()},
+            self.state_dict()
+        ], path)
 
 
 def loss_func(
-        left_mean: torch.Tensor, left_cov: torch.Tensor, right_mean: torch.Tensor, right_cov: torch.Tensor,
-        labels: torch.Tensor, threshold = 1.0, loss_name:str = "mahalanobis", include_std:bool = True,
+        left_embs: torch.Tensor, right_embs: torch.Tensor, labels: torch.Tensor, loss_name:str = "mahalanobis",
 ):
     """
     Definition of the loss functions
@@ -280,32 +95,18 @@ def loss_func(
 
     if loss_name == "l2":
 
-        left_mean = left_mean
-        right_mean = right_mean
-
-        squared_dist = torch.norm(left_mean - right_mean, dim=1) ** 2
+        squared_dist = torch.norm(left_embs - right_embs, dim=1) ** 2
         output = labels * squared_dist - (1 - labels) * torch.log(1 - torch.exp(-squared_dist) + 1e-6)
         return output.mean()
 
-    elif loss_name == "mahalanobis":
+    elif loss_name == "bern_hinge_squared":
 
-        # Compute the term (m_i - m_j)^2
-        squared_diff = (left_mean - right_mean) ** 2
+        # This loss is the function used in SemiBin2 implementation
+        dist = torch.norm(left_embs - right_embs, p=2, dim=1)
+        squared_dist = torch.square(dist)
+        squared_margin = torch.square(torch.nn.functional.relu(1 - dist))
+        output = labels * squared_dist + (1 - labels) * squared_margin
 
-        if not include_std:
-
-            # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 4.
-
-        else:
-
-            # Compute the term (m_i - m_j)^2 / (s_i + s_j)
-            squared_diff = squared_diff / (left_cov + right_cov)
-
-            # Compute the log expectation
-            log_expectation = -squared_diff.sum(dim=1) / 1.
-
-        output = -labels * log_expectation - (1 - labels) * torch.log(1 - torch.exp(torch.nn.functional.threshold(log_expectation, -threshold, 0)) + 1e-6)
         return output.mean()
 
     else:
@@ -316,11 +117,12 @@ def train_batch(model, criterion, optimizer, left_kmers: torch.Tensor, right_kme
     # Zero your gradients since PyTorch accumulates gradients on subsequent backward passes.
     optimizer.zero_grad()
 
-    # Make predictions for the current epoch
-    left_mean, left_cov, right_mean, right_cov = model(left_kmers, right_kmers)
+    # Get the embeddings
+    left_embs = model.forward(left_kmers)
+    right_embs = model.forward(right_kmers)
 
     # Compute the loss and backpropagate
-    batch_loss = criterion(left_mean, left_cov, right_mean, right_cov, labels)
+    batch_loss = criterion(left_embs, right_embs, labels)
     batch_loss.backward()
 
     # Update the model parameters
@@ -353,46 +155,23 @@ def train_single_epoch(device, model, criterion, optimizer, data_loader):
     return average_epoch_loss
 
 def train(
-        device, distributed, model, strategy, lr, threshold, loss_name, data_loader, epoch_num: int, save_every:int,
+        device, distributed, model, lr, loss_name, loss_threshold, data_loader, epoch_num: int, save_every:int,
         output_path, summary_writer
 ):
-    # Check the strategy name
-    assert strategy in ["sequential", "mean_only", "var_only", "together"], f"Unknown strategy name: {strategy}"
 
-    ### Define the optimizer
-    # At the beginning, we will not train the standard deviation parameters if the strategy is "sequential" or "mean_only"
-    include_std = False if strategy in ["sequential", "mean_only"] else True
     # Get the model parameters to train
-    model_params = []
-    for name, param in model.named_parameters():
-        if 'std' in name and (strategy in ["sequential", "mean_only"]):
-            param.requires_grad = False
-        elif 'mean' in name and strategy in ["var_only"]:
-            param.requires_grad = False
-        else:
-            model_params.append(param)
+    model_params = model.parameters()
 
-    ### Define the loss function.
-    # Since we won't train the std weights at the beginning, we will not include them in the loss function
-    criterion = partial(loss_func, threshold=threshold, loss_name=loss_name, include_std=include_std)
+    # Define the loss function.
+    criterion = partial(loss_func, loss_name=loss_name)
     # Define the optimizer
     optimizer = torch.optim.Adam(model_params, lr=lr)
 
     ### Start training
     print(f"+ Training started.")
 
-    # Set the correct training/evaluation modes
-    if strategy in ["mean_only", "sequential"]:
-        model.mean.train()
-        model.std.eval()
-    elif strategy == "var_only":
-        model.std.train()
-        model.mean.eval()
-    elif strategy == "together":
-        model.mean.train()
-        model.std.train()
-    else:
-        raise ValueError(f"Unknown strategy name: {strategy}")
+    # Set the correct training modes
+    model.encoder.train()
 
     for current_epoch in range(epoch_num):
 
@@ -400,31 +179,7 @@ def train(
         if distributed:
             data_loader.sampler.set_epoch(current_epoch)
 
-        # For the second half of the training, we will also train the std weights if the strategy is "sequential"
-        if (current_epoch+1) > epoch_num * (1./ 2) and include_std == False and strategy == "sequential":
-
-            # # Set the gradient of the std weights to True
-            std_params = []
-            for name, param in model.named_parameters():
-                param.requires_grad = False
-                if 'std' in name:
-                    param.requires_grad = True
-                    std_params.append(param)
-
-            # Set the include_std to True
-            include_std = True
-            # Define the optimizer
-            optimizer = torch.optim.Adam(std_params, lr=lr)
-            # Define the loss function
-            criterion = partial(loss_func, threshold=threshold, loss_name=loss_name, include_std=include_std)
-            if (distributed and device == 0) or (not distributed):
-                print(f"   - Only the covariance parameters are included in the optimizer now! (lr = {lr})")
-
-            # Set the correct model modes
-            model.mean.eval()
-            model.std.train()
-
-        ## Run the training for the current epoch
+        # Run the training for the current epoch
         init_time = time.time()
         loss = train_single_epoch(
             device=device, model=model, criterion=criterion, optimizer=optimizer, data_loader=data_loader
@@ -473,8 +228,8 @@ def train(
 
 def main_worker(
         device, world_size, distributed:bool, training_dataset: PairDataset, output_path: str, checkpoint: str,
-        k: int, out_dim: int, strategy:str, lr:float, epoch_num:int, batch_size:int, threshold:float,
-        workers_num: int, save_every: int, loss_name: str, log_dir:str, seed: int,
+        out_dim: int, lr:float, epoch_num:int, batch_size:int, loss_name: str, loss_threshold:float,
+        workers_num: int, save_every: int, log_dir:str, seed: int,
 ):
     ### Initialize the device
     if distributed:
@@ -495,7 +250,7 @@ def main_worker(
     )
 
     ### Define the model
-    model = Model(k=k, out_dim=out_dim, seed=seed)
+    model = Model(input_dim=training_dataset.get_input_feature_dim(), out_dim=out_dim, seed=seed)
     if checkpoint != "":
         print(f"+ Loading the model from the checkpoint: {checkpoint}")
         # Load the model from the checkpoint
@@ -517,9 +272,9 @@ def main_worker(
 
     ### Train the model
     train(
-        device=device, distributed=distributed, model=model, strategy=strategy, lr=lr, threshold=threshold,
-        loss_name=loss_name, data_loader=training_loader, epoch_num=epoch_num, save_every=save_every,
-        output_path=output_path, summary_writer=summary_writer,
+        device=device, distributed=distributed, model=model, lr=lr, loss_name=loss_name, loss_threshold=loss_threshold,
+        data_loader=training_loader, epoch_num=epoch_num, save_every=save_every, output_path=output_path,
+        summary_writer=summary_writer,
     )
 
     # Close the summary writer
@@ -541,7 +296,7 @@ if __name__ == "__main__":
         '--input', type=str, help='Input DNA sequences file', required=True
     )
     parser.add_argument(
-        '--input_type', type=str, help='Input file type (dna, kmer)', required=False, default='dna'
+        '--input_type', type=str, help='Input file type (fasta, kmer)', required=False, default='fasta'
     )
     parser.add_argument(
         '--output', type=str, help='Model file path to save', required=True
@@ -568,11 +323,10 @@ if __name__ == "__main__":
         '--lr', type=float, default=0.001, help='Learning rate'
     )
     parser.add_argument(
-        '--threshold', type=float, default=1.0, help='Threshold value'
+        '--loss_name', type=str, default="l2", help='Loss function (l2, bern_hinge_squared)'
     )
     parser.add_argument(
-        '--strategy', type=str, default="sequential",
-        help='Learning starting strategy (sequential, mean_only, var_only, together)'
+        '--loss_threshold', type=float, default=1.0, help='Loss threshold value'
     )
     parser.add_argument(
         '--batch_size', type=int, default=100000, help='Batch size (0: no batch)'
@@ -588,9 +342,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--workers', type=int, default=2, help='Number of data loading workers'
-    )
-    parser.add_argument(
-        '--loss_name', type=str, default="mahalanobis", help='Loss function (l2, mahalanobis)'
     )
     parser.add_argument(
         '--log_dir', type=str, default="", help='Path directory to save the log file'
@@ -622,16 +373,15 @@ if __name__ == "__main__":
     # Get the model name from the output path
     print(f"\t- k value: {args.k}")
     print(f"\t- Loss name: {args.loss_name}")
+    print(f"\t- Loss threshold value: {args.loss_threshold}")
     print(f"\t- Epoch number: {args.epoch}")
     print(f"\t- Batch size: {args.batch_size}")
     print(f"\t- Learning rate: {args.lr}")
-    print(f"\t- Threshold value: {args.threshold}")
     print(f"\t- Output dimension: {args.out_dim}")
     print(f"\t- Negative sample per positive pair: {args.neg_sample_per_pos}")
     print(f"\t- Maximum number of sequence pairs to use: {args.max_seq_num}")
     if args.checkpoint != "":
         print(f"\t- Checkpoint file: {args.checkpoint}")
-    print(f"\t- Learning starting strategy: {args.strategy}")
     if args.distributed:
         print(f"\t- Distributed training is activated with {world_size} GPUs")
     else:
@@ -641,16 +391,18 @@ if __name__ == "__main__":
     print(f"\t- Seed value: {args.seed}")
     print(f"\t- Output model name: {os.path.basename(args.output)}")
 
-    ### Read the dataset and construct the data loader
+    ### Read the dataset and construct the tokenizer
+    tokenizer = KmerTokenizer(k=args.k, counting_method = "canonical")
     training_dataset = PairDataset(
-        file_path=args.input, k=args.k, neg_sample_per_pos=args.neg_sample_per_pos, input_type=args.input_type,
-        max_seq_num=args.max_seq_num, seed=args.seed,
+        file_path=args.input, tokenizer=tokenizer, neg_sample_per_pos=args.neg_sample_per_pos,
+        input_type=args.input_type, max_seq_num=args.max_seq_num, seed=args.seed,
     )
+
     # Define the arguments for the main worker function
     arguments = (
-        world_size, args.distributed, training_dataset, args.output, args.checkpoint, args.k, args.out_dim,
-        args.strategy, args.lr, args.epoch, args.batch_size, args.threshold, args.workers, args.save_every,
-        args.loss_name, args.log_dir, args.seed,
+        world_size, args.distributed, training_dataset, args.output, args.checkpoint, args.out_dim, args.lr,
+        args.epoch, args.batch_size, args.loss_name, args.loss_threshold, args.workers, args.save_every,
+        args.log_dir, args.seed,
     )
     if args.distributed:
         torch.multiprocessing.spawn(main_worker, nprocs=world_size, join=True, args=arguments)
