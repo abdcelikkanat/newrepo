@@ -33,9 +33,10 @@ class Model(torch.nn.Module):
         # Set the parameters
         self.__input_dim = input_dim
         self.__out_dim = out_dim
+        self.__seed = seed
 
         # Set the seed
-        set_seed(seed)
+        set_seed(self.__seed)
 
         # Define the layers
         self.encoder = torch.nn.Sequential(
