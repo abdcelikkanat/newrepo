@@ -163,8 +163,8 @@ cython_debug/
 
 .DS_Store
 .idea
-*.err
-*.out
+dataset/*.bam
+outputs
 models
 logs
 results
